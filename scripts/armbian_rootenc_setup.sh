@@ -146,8 +146,8 @@ _sigint_handler() {
 }
 
 _exit_handler() {
-	_show_output
 	local err=$?
+	_show_output
 	[ $err -ne 0 -a -z "$usr_exit" ] && {
 		rmsg "$SCRIPT_DESC exiting with error (exit code $err)"
 	}
@@ -287,7 +287,7 @@ _get_user_vars() {
 
 	_get_user_var 'BOOTPART_LABEL' 'boot partition label' 'ARMBIAN_BOOT' \
 		"Enter a boot partition label for the target machine,
-		 or hit ENTER for the default (%s): " \
+		or hit ENTER for the default (%s): " \
 		'^[A-Za-z0-9_]{1,16}$' \
 		"Label must contain no more than 16 characters in the set 'A-Za-z0-9_'"
 
@@ -368,14 +368,14 @@ _print_pkgs_to_install() {
 			case "$host_distro" in
 				focal|bionic|buster) pkgs='cryptsetup-bin ed' ;;
 				*)                   pkgs='cryptsetup ed'
-                                     warn "Warning: unrecognized host distribution '$host_distro'" ;;
+									 warn "Warning: unrecognized host distribution '$host_distro'" ;;
 			esac ;;
 		'target')
 			case "$target_distro" in
 				focal|buster) pkgs='cryptsetup-initramfs' pkgs_ssh='dropbear-initramfs' ;;
 				bionic)       pkgs='cryptsetup'           pkgs_ssh='dropbear-initramfs' ;;
 				*)            pkgs='cryptsetup'           pkgs_ssh='dropbear'
-                              warn "Warning: unrecognized target distribution '$target_distro'" ;;
+							  warn "Warning: unrecognized target distribution '$target_distro'" ;;
 			esac
 			[ "$IP_ADDRESS" != 'none' ] && pkgs+=" $pkgs_ssh" ;;
 	esac
@@ -648,13 +648,13 @@ _user_confirm() {
 erase_boot_sector_and_first_partition() {
 	local sectors count
 	sectors=$((START_SECTOR+BOOT_SECTORS+100))
-	count=$(((sectors/2048)+1))
+	count=$(((sectors/8192)+1))
 	pu_msg "Erasing up to beginning of second partition ($sectors sectors, ${count}M):"
 	_show_output
 	dd  if=/dev/zero \
 		of=/dev/$SDCARD_DEVNAME \
 		status=progress \
-		bs=$((512*2048)) \
+		bs=$((512*8192)) \
 		count=$count
 	_hide_output
 }
@@ -662,9 +662,9 @@ erase_boot_sector_and_first_partition() {
 create_partition_label() {
 	pu_msg "Creating new partition label on /dev/$SDCARD_DEVNAME"
 	local fdisk_cmds="o\nw\n"
-    set +e
+	set +e
 	echo -e "$fdisk_cmds" | fdisk "/dev/$SDCARD_DEVNAME"
-    set -e
+	set -e
 	do_partprobe
 }
 
@@ -782,9 +782,16 @@ mount_target() {
 	mount "/dev/mapper/$ROOTFS_NAME" $TARGET_ROOT
 	mount "/dev/$BOOT_DEVNAME" "$TARGET_ROOT/boot"
 
-	mount -o rbind /dev "$TARGET_ROOT/dev"
-	mount -t proc proc "$TARGET_ROOT/proc"
-	mount -t sysfs sys "$TARGET_ROOT/sys"
+	local src dest args
+	while read src dest args; do
+		mount $args $src $TARGET_ROOT/$dest
+	done <<-EOF
+		udev   dev     -t devtmpfs -o rw,relatime,nosuid,mode=0755
+		devpts dev/pts -t devpts
+		tmpfs  dev/shm -t tmpfs    -o rw,nosuid,nodev,relatime
+		proc   proc    -t proc
+		sys    sys     -t sysfs
+	EOF
 }
 
 _copy_to_target() {
@@ -855,11 +862,7 @@ _display_file() {
 	echo "┌─$hls─┐"
 	echo "│ $name: │"
 	echo "├─$hls─┘"
-	while read reply; do
-		echo "│ $reply"
-	done <<-EOF
-	$text
-	EOF
+	echo "$text" | sed 's/^/│ /'
 }
 
 edit_armbianEnv() {
@@ -1053,10 +1056,10 @@ configure_target() {
 	/bin/cp $0 $TARGET_ROOT
 	export 'ROOTFS_NAME' 'IP_ADDRESS' 'target_distro' 'ROOTENC_TESTING' 'ROOTENC_PAUSE' 'ROOTENC_IGNORE_APT_ERRORS' 'APT_UPGRADE'
 
-	chroot $TARGET_ROOT $0 $ORIG_OPTS 'in_target'
+	chroot $TARGET_ROOT "./$PROGNAME" $ORIG_OPTS 'in_target'
 
 	/bin/cp -a '/etc/resolv.conf' "$TARGET_ROOT/etc" # this could be a symlink
-	/bin/rm "$TARGET_ROOT/$0"
+	/bin/rm "$TARGET_ROOT/$PROGNAME"
 
 	_add_state_file 'target_configured' 'target'
 }
