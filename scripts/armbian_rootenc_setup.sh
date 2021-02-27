@@ -47,9 +47,11 @@ print_help() {
                    fix blank screen on bootup issues)
              '-p'  Partition and create filesystems only.  Do not copy data
              '-s'  Use 'authorized_keys' file from working directory, if available
+                   (see below)
              '-v'  Be more verbose
              '-u'  Perform an 'apt upgrade' after each 'apt update'
              '-z'  Erase boot sector and first partition of SD card before partitioning
+                   (an extra paranoia step, but it can’t hurt)
 
   For non-interactive operation, set the following variables in your environment
   or on the command line:
@@ -69,8 +71,9 @@ print_help() {
   connected and its clock correctly set.
 
   If remote unlocking via SSH is desired, the unlocking host must be reachable.
-  Alternatively, SSH public keys for the unlocking host or hosts may be placed
-  in the file 'authorized_keys' in the current directory.
+  Alternatively, SSH public keys for the unlocking host or hosts may be listed
+  in the file 'authorized_keys' in the current directory.  This file has the
+  same format as a standard SSH 'authorized_keys' file.
 
   Architecture of host and target (e.g. 64-bit or 32-bit ARM) must be the same.
 
@@ -953,18 +956,38 @@ tmpfs /tmp tmpfs defaults,nosuid 0 0"
 }
 
 edit_dropbear_cfg() {
-	local file text
-	file="$TARGET_ROOT/etc/dropbear-initramfs/config"
+	local dest file text
+	dest="$TARGET_ROOT/etc/dropbear-initramfs"
+	file="$dest/config"
+	text='DROPBEAR_OPTIONS="-p 2222"
+DROPBEAR=y'
 	if [ "$IP_ADDRESS" == 'none' ]; then
 		[ -e $file ] && rm -v $file
 		true
 	else
-		mkdir -p '/etc/dropbear-initramfs'
-		text='DROPBEAR_OPTIONS="-p 2222"
-DROPBEAR=y'
+		mkdir -p $dest
 		[ -e $file ] && grep -q '^DROPBEAR_OPTIONS="-p 2222"' $file || echo "$text" >> $file
 		_display_file $file
 	fi
+}
+
+create_cryptroot_unlock_sh() {
+	local dest file text
+	dest="$TARGET_ROOT/etc/initramfs-tools/hooks"
+	file="$dest/cryptroot-unlock.sh"
+	text='#!/bin/sh
+if [ "$1" = "prereqs" ]; then echo "dropbear-initramfs"; exit 0; fi
+. /usr/share/initramfs-tools/hook-functions
+source="/tmp/cryptroot-unlock-profile"
+root_home=$(echo $DESTDIR/root-*)
+root_home=${root_home#$DESTDIR}
+echo "if [ \"\$SSH_CLIENT\" ]; then /usr/bin/cryptroot-unlock; fi" > $source
+copy_file ssh_login_profile $source $root_home/.profile
+exit 0'
+	mkdir -p $dest
+	echo "$text" > $file
+	chmod 755 $file
+	_display_file $file
 }
 
 # begin chroot functions:
@@ -1049,6 +1072,7 @@ configure_target() {
 	create_etc_crypttab
 	create_fstab
 	edit_dropbear_cfg
+	[ "$IP_ADDRESS" == 'none' ] || create_cryptroot_unlock_sh
 	edit_armbianEnv
 	_debug_pause
 
@@ -1161,5 +1185,11 @@ else
 	[ "$rootpart_copied" == 'n' ]        && copy_system_root
 	[ "$target_configured" == 'n' ]      && configure_target
 
+	sync
 	gmsg 'All done!'
+
+	if [ "$IP_ADDRESS" != 'none' ]; then
+		imsg "To unlock the target disk, execute the following from the unlocking host:"
+		imsg "    ssh -p 2222 root@${IP_ADDRESS/dhcp/TARGET_IP}"
+	fi
 fi
