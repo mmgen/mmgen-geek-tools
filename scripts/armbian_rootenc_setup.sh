@@ -65,6 +65,8 @@ print_help() {
       BOOTPART_LABEL     - Boot partition label of target
       DISK_PASSWD        - Disk password of target root filesystem
       UNLOCKING_USERHOST - USER@HOST of remote unlocking host
+      SERIAL_CONSOLE     - Set this to 'y' to enable disk unlocking from the
+                           serial console
 
 
                             INSTRUCTIONS FOR USE
@@ -323,6 +325,16 @@ _get_user_vars() {
 			'malformed USER@HOST' \
 			'_test_unlocking_host_available'
 	fi
+
+	_get_user_var 'SERIAL_CONSOLE' 'serial console unlocking' '' \
+		"Unlock the disk from the serial console.  WARNING: enabling this will
+		make it impossible to unlock the disk using the keyboard and monitor,
+		though unlocking via SSH will still work.
+		Enable serial console unlocking? (y/n):" \
+		'^[ynYN]*$' \
+		"You must type 'y' or 'n'"
+	if [[ $SERIAL_CONSOLE =~ ^[Yy]$ ]]; then SERIAL_CONSOLE='yes'; else SERIAL_CONSOLE='no'; fi
+
 	true
 }
 
@@ -486,6 +498,7 @@ _confirm_user_vars() {
 	echo "  Target IP address:            $IP_ADDRESS"
 	echo "  Boot partition label:         $BOOTPART_LABEL"
 	echo "  Disk password:                $DISK_PASSWD"
+	echo "  Serial console unlocking:     $SERIAL_CONSOLE"
 	[ "$UNLOCKING_USERHOST" ] && echo "  user@host of unlocking machine: $UNLOCKING_USERHOST"
 	echo
 	_user_confirm '  Are these settings correct?' 'yes'
@@ -872,7 +885,7 @@ _display_file() {
 }
 
 edit_armbianEnv() {
-	local file text
+	local file text console_arg
 	file="$TARGET_ROOT/boot/armbianEnv.txt"
 	ed $file <<-'EOF'
 		g/^\s*rootdev=/d
@@ -880,8 +893,14 @@ edit_armbianEnv() {
 		g/^\s*bootlogo=/d
 		wq
 	EOF
+
+	case $SERIAL_CONSOLE in
+		'yes') console_arg='serial' ;;
+		*)     console_arg='display' ;;
+	esac
+
 	text="rootdev=/dev/mapper/$ROOTFS_NAME
-console=display
+console=$console_arg
 bootlogo=false"
 	echo "$text" >> $file
 	_display_file $file
