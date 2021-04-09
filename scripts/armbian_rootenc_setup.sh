@@ -1,5 +1,6 @@
 #!/bin/bash
 
+PATH="$PATH:/usr/sbin:/sbin"
 RED="\e[31;1m" GREEN="\e[32;1m" YELLOW="\e[33;1m" BLUE="\e[34;1m" PURPLE="\e[35;1m" RESET="\e[0m"
 PROGNAME=$(basename $0)
 TITLE='Armbian Encrypted  Root Filesystem          Setup'
@@ -24,6 +25,7 @@ USER_OPTS_INFO="
 	NO_CLEANUP                 no cleanup of mounts after program run
 	FORCE_REBUILD              force full rebuild
 	FORCE_RECONFIGURE          force reconfiguration
+	FORCE_REFORMAT_ROOT        force reformat of encrypted root partition
 	ADD_ALL_MODS               add all currently loaded modules to initramfs
 	USE_LOCAL_AUTHORIZED_KEYS  use local 'authorized_keys' file
 	PARTITION_ONLY             partition and create filesystems only
@@ -46,6 +48,7 @@ print_help() {
              '-m'  Add all currently loaded modules to the initramfs (may help
                    fix blank screen on bootup issues)
              '-p'  Partition and create filesystems only.  Do not copy data
+             '-R'  Force reformat of encrypted root partition
              '-s'  Use 'authorized_keys' file from working directory, if available
                    (see below)
              '-v'  Be more verbose
@@ -750,7 +753,7 @@ create_bootpart_label() {
 }
 
 copy_system_root() {
-	if ! cryptsetup isLuks "/dev/$ROOT_DEVNAME"; then
+	if [ "$FORCE_REFORMAT_ROOT" ] || ! cryptsetup isLuks "/dev/$ROOT_DEVNAME"; then
 		pu_msg "Formatting encrypted root partition:"
 		echo -n $DISK_PASSWD | cryptsetup luksFormat "/dev/$ROOT_DEVNAME" '-'
 	fi
@@ -1102,7 +1105,7 @@ _set_env_vars() {
 
 # begin execution
 
-while getopts hCdmfFpsuvz OPT
+while getopts hCdmfFpRsuvz OPT
 do
 		case "$OPT" in
 			h)  print_help; exit ;;
@@ -1111,6 +1114,7 @@ do
 			f)  FORCE_RECONFIGURE='y' ;;
 			m)  ADD_ALL_MODS='y' ;;
 			p)  PARTITION_ONLY='y' ;;
+			R)  FORCE_REFORMAT_ROOT='y' ;;
 			s)  USE_LOCAL_AUTHORIZED_KEYS='y' ;;
 			u)  APT_UPGRADE='y' ;;
 			d)  DEBUG='y' ;&
