@@ -887,17 +887,6 @@ bootlogo=false"
 	_display_file $file
 }
 
-edit_boot_cmd() {
-	local file="$TARGET_ROOT/boot/boot.cmd"
-	ed $file <<-'EOF'
-		g/^\s*setenv rootdev/d
-		g/^\s*setenv console/d
-		g/^\s*setenv bootlogo/d
-		wq
-	EOF
-	_display_file $file
-}
-
 # Add the following lines to '/etc/initramfs-tools/initramfs.conf'. If
 # your board’s IP address will be statically configured, substitute the
 # correct static IP address after 'IP='.  If it will be configured via
@@ -995,13 +984,6 @@ exit 0'
 
 # begin chroot functions:
 
-make_image() {
-	local cmd text
-	cmd="mkimage -C none -A arm -T script -d /boot/boot.cmd /boot/boot.scr"
-	local text=$($cmd)
-	_display_file "$cmd" "$text"
-}
-
 apt_install_target() {
 	local pkgs=$(_print_pkgs_to_install 'target')
 	[ "$pkgs" ] && {
@@ -1068,7 +1050,6 @@ configure_target() {
 	_set_target_vars
 	copy_etc_files
 	copy_etc_files_distro_specific
-	edit_boot_cmd
 	edit_initramfs_conf
 	edit_initramfs_modules
 	[ "$IP_ADDRESS" == 'none' ] || copy_authorized_keys
@@ -1149,7 +1130,6 @@ if [ "$ARG1" == 'in_target' ]; then
 	SCRIPT_DESC='Target script'
 	set -e
 	_hide_output
-	make_image
 	[ "$target_distro" == 'bionic' ] && {
 		echo 'export CRYPTSETUP=y' > '/etc/initramfs-tools/conf.d/cryptsetup'
 	}
