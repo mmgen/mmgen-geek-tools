@@ -431,18 +431,21 @@ remove_build_dir() {
 }
 
 _get_device_maps() {
-	local dm_type=$1
-	local varname="device_maps_${dm_type}"
+	local dm_type=$1 varname="device_maps_$1" dm_name ls mp
 	eval "$varname="
-	local data=$(lsblk --list --noheadings --output=KNAME,MOUNTPOINT | egrep '^dm-[0-9]')
-	while read kname mountpoint; do
-		[ "$dm_type" == 'unmounted' -a "$mountpoint" ] && continue
-		[ "$dm_type" == 'mounted_on_target' -a \
-			"${mountpoint: -${#TARGET_ROOT}}" != "$TARGET_ROOT" ] && continue
-		eval "$varname+=/dev/$kname "
-	done <<-EOF
-		$data
-	EOF
+	for dm_name in $(dmsetup ls | awk '{print $1}'); do
+		[ $(lsblk --noheadings --nodeps -o fstype /dev/mapper/$dm_name) == 'ext4' ] || continue
+		ls=$(findmnt -n --source /dev/mapper/$dm_name | awk '{print $1}')
+		if [ "$ls" -a "$dm_type" == 'mounted_on_target' ]; then
+			for mp in $ls; do
+				if [ "${mp: -${#TARGET_ROOT}}" == "$TARGET_ROOT" ]; then
+					eval "$varname+=$dm_name "
+				fi
+			done
+		elif [ -z "$ls" -a "$dm_type" == 'unmounted' ]; then
+			eval "$varname+=$dm_name "
+		fi
+	done
 	tmsg "$varname=[${!varname}]"
 }
 
