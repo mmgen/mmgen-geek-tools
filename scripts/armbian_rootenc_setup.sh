@@ -137,29 +137,25 @@ die() {
 	exit 1
 }
 
-_fmsg() {
-	local funcname=$1 errval=$2 res
+_return_handler() {
+	local funcname=${FUNCNAME[1]} exitval=$? res
 	if [ "${funcname:0:1}" == '_' -o "$no_fmsg" ]; then
 		no_fmsg=
 		return 0
 	fi
-	if [ "$errval" -eq 0 ]; then res='OK'; else res="False ($errval)"; fi
+	if [ "$exitval" -eq 0 ]; then res='OK'; else res="False ($exitval)"; fi
 	printf "$BLUE%-32s $res$RESET\n" "$funcname" >&$stdout_dup
 }
 
 _sigint_handler() {
 	warn "\nExiting at user request"
-	usr_exit=1
 	exit 1
 }
 
-_exit_handler() {
-	local err=$?
-	_show_output
-	[ $err -ne 0 -a -z "$usr_exit" ] && {
-		rmsg "$SCRIPT_DESC exiting with error (exit code $err)"
-	}
-	return $err
+_error_handler() {
+	local exitval=$?
+	warn "$(basename ${BASH_SOURCE[1]}):${BASH_LINENO[0]}: ${FUNCNAME[1]}() failed at command '$BASH_COMMAND'"
+	rmsg "$SCRIPT_DESC exiting with error ($exitval)"
 }
 
 _do_header() {
@@ -471,8 +467,6 @@ _preclean() {
 }
 
 _clean() {
-	local err=$?
-	[ $err -ne 0 -a -z "$usr_exit" ] && rmsg "$SCRIPT_DESC exiting with error (exit code $err)"
 	pu_msg "Cleaning up, please wait..."
 	_show_output
 	close_loopmount
@@ -661,7 +655,6 @@ _user_confirm() {
 	[ "$dfl_action" == 'yes' -a -z "$reply" ] && return
 	[ "$reply" == 'y' -o "$reply" == 'Y' ] && return
 	warn "Exiting at user request"
-	usr_exit=1
 	exit 1
 }
 
@@ -1106,6 +1099,8 @@ _set_env_vars() {
 
 # begin execution
 
+set -e
+
 while getopts hCdmfFpRsuvz OPT
 do
 		case "$OPT" in
@@ -1128,11 +1123,12 @@ done
 
 shift $((OPTIND-1))
 
-trap '_fmsg "$FUNCNAME" $?' RETURN
+trap '_return_handler' RETURN
 trap '_sigint_handler' INT
-trap '_exit_handler' EXIT
+trap '_error_handler' ERR
 
 set -o functrace
+set -o errtrace
 
 exec {stdout_dup}>&1
 exec {stderr_dup}>&2
@@ -1148,7 +1144,6 @@ _set_env_vars $@
 
 if [ "$ARG1" == 'in_target' ]; then
 	SCRIPT_DESC='Target script'
-	set -e
 	_hide_output
 	[ "$target_distro" == 'bionic' ] && {
 		echo 'export CRYPTSETUP=y' > '/etc/initramfs-tools/conf.d/cryptsetup'
@@ -1169,7 +1164,6 @@ else
 	_warn_user_opts
 	_confirm_user_vars
 
-	set -e
 	[ "$IP_ADDRESS" == 'none' ] || get_authorized_keys
 
 	create_build_dir
