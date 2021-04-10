@@ -185,14 +185,14 @@ _warn_user_opts() {
 	local out
 	while read opt text; do
 		[ "$opt" ] || continue
-		[ $(eval echo -n \$$opt) ] && out+="  + $text\n"
+		if [ $(eval echo -n \$$opt) ]; then out+="  + $text\n"; fi
 	done <<-EOF
 		$USER_OPTS_INFO
 	EOF
-	[ "$out" ] && {
+	if [ "$out" ]; then
 		warn      "  The following user options are in effect:"
 		warn_nonl "${out}"
-	}
+	fi
 }
 
 _set_host_vars() {
@@ -220,19 +220,19 @@ check_sdcard_name_and_params() {
 	pttype=$(blkid --output=udev $dev | grep TYPE | cut -d '=' -f2)
 	size="$(lsblk --noheadings --nodeps --list --output=SIZE --bytes $dev 2>/dev/null)"
 	removable="$(lsblk --noheadings --nodeps --list --output=RM $dev 2>/dev/null)"
-	nodos=$([ "$pttype" -a "$pttype" != 'dos' ] && echo "Partition type is ${pttype^^}")
-	oversize=$([ $size -gt 137438953472 ] && echo 'Size is > 128GiB')
+	nodos=$([ "$pttype" -a "$pttype" != 'dos' ] && echo "Partition type is ${pttype^^}") || true
+	oversize=$([ $size -gt 137438953472 ] && echo 'Size is > 128GiB') || true
 	non_removable=$([ $removable -ne 0 ] || echo 'Device is non-removable')
 	SD_INFO="$(lsblk --noheadings --nodeps --list --output=VENDOR,MODEL,SIZE $dev 2>/dev/null)"
 	SD_INFO=${SD_INFO//  / }
-	[ "$nodos" -o "$oversize" -o "$non_removable" ] && {
+	if [ "$nodos" -o "$oversize" -o "$non_removable" ]; then
 		warn "  $dev ($SD_INFO) doesn’t appear to be an SD card"
 		warn "  for the following reasons:"
-		[ "$non_removable" ] && warn "      $non_removable"
-		[ "$nodos" ] && warn "      $nodos"
-		[ "$oversize" ] && warn "      $oversize"
+		if [ "$non_removable" ]; then warn "      $non_removable"; fi
+		if [ "$nodos" ]; then warn "      $nodos"; fi
+		if [ "$oversize" ]; then warn "      $oversize"; fi
 		_user_confirm '  Are you sure this is the correct device of your blank SD card?' 'no'
-	}
+	fi
 	SDCARD_DEVNAME=${dev:5}
 	[ "${SDCARD_DEVNAME%[0-9]}" == $SDCARD_DEVNAME ] || part_sep='p'
 	BOOT_DEVNAME=$SDCARD_DEVNAME${part_sep}1
@@ -245,7 +245,7 @@ _get_user_var() {
 	local var desc dfl prompt pat pat_errmsg vtest cprompt seen_prompt reply redo
 	var=$1 desc=$2 dfl=$3 prompt=$4 pat=$5 pat_errmsg=$6 vtest=$7
 	while true; do
-		[ -z "${!var}" -o "$seen_prompt" -o "$redo" ] && {
+		if [ -z "${!var}" -o "$seen_prompt" -o "$redo" ]; then
 			if [ "$seen_prompt" ]; then
 				echo -n "  Enter $desc: "
 			else
@@ -264,22 +264,22 @@ _get_user_var() {
 				seen_prompt=1
 			fi
 			eval "read $var"
-		}
+		fi
 		redo=1
-		[ -z "${!var}" -a "$dfl" ] && eval "$var=$dfl"
+		if [ -z "${!var}" -a "$dfl" ]; then eval "$var=$dfl"; fi
 		[ "${!var}" ] || {
 			rmsg "  $desc must not be empty"
 			continue
 		}
-		[ "$pat" ] && {
+		if [ "$pat" ]; then
 			echo "${!var}" | egrep -qi "$pat" || {
 				rmsg "  ${!var}: $pat_errmsg"
 				continue
 			}
-		}
-		[ "$vtest" ] && {
+		fi
+		if [ "$vtest" ]; then
 			$vtest || continue
-		}
+		fi
 		break
 	done
 }
@@ -457,6 +457,7 @@ _close_device_maps() {
 		tmsg "closing $i"
 		cryptsetup status $i > '/dev/null' && cryptsetup luksClose $i
 	done
+	true
 }
 
 _preclean() {
