@@ -52,6 +52,8 @@ print_help() {
              '-m'  Add all currently loaded modules to the initramfs (may help
                    fix blank screen on bootup issues)
              '-o'  Add specified modules to the initramfs (comma-separated list)
+             '-M'  Mount source and target systems and exit
+             '-U'  Unmount source and target systems and exit
              '-p'  Partition and create filesystems only.  Do not copy data
              '-R'  Force reformat of encrypted root partition
              '-s'  Use 'authorized_keys' file from working directory, if available
@@ -251,6 +253,12 @@ check_sdcard_name_and_params() {
 _get_user_var() {
 	local var desc dfl prompt pat pat_errmsg vtest cprompt seen_prompt reply redo
 	var=$1 desc=$2 dfl=$3 prompt=$4 pat=$5 pat_errmsg=$6 vtest=$7
+
+	[ "$MOUNT_TARGET_ONLY" ] && [[ ! $var =~ ^(DISK_PASSWD|ROOTFS_NAME)$ ]] && {
+		eval "$var=$dfl"
+		return 0
+	}
+
 	while true; do
 		if [ -z "${!var}" -o "$seen_prompt" -o "$redo" ]; then
 			if [ "$seen_prompt" ]; then
@@ -326,11 +334,16 @@ _get_user_vars() {
 		"Name must contain no more than 48 characters in the set 'a-z0-9_'" \
 		'_test_rootfs_mounted'
 
-	_get_user_var 'DISK_PASSWD' 'disk password' '' \
-		"Choose a simple disk password for the installation process.
+	if [ "$MOUNT_TARGET_ONLY" ]; then
+		local pw_prompt="Enter disk password:"
+	else
+		local pw_prompt="Choose a simple disk password for the installation process.
 		Once your encrypted system is up and running, you can change
 		the password using the 'cryptsetup' command.
-		Enter password:" \
+		Enter password:"
+	fi
+
+	_get_user_var 'DISK_PASSWD' 'disk password' '' "$pw_prompt" \
 		'^[A-Za-z0-9_ ]{1,10}$' \
 		"Temporary disk password must contain no more than 10 characters in the set 'A-Za-z0-9_ '"
 
@@ -1125,19 +1138,29 @@ _set_env_vars() {
 	shopt -u extglob
 }
 
+_mount_target_and_exit() {
+	setup_loopmount
+	mount_target
+	_set_target_vars
+	rmdir $BOOT_ROOT
+	exit
+}
+
 # begin execution
 
 set -e
 
-while getopts hCdmofFpRsuvz OPT
+while getopts hCfFmo:MUpRsudvz OPT
 do
 		case "$OPT" in
 			h)  print_help; exit ;;
 			C)  NO_CLEANUP='y' ;;
-			F)  FORCE_REBUILD='y' ;;
 			f)  FORCE_RECONFIGURE='y' ;;
+			F)  FORCE_REBUILD='y' ;;
 			m)  ADD_ALL_MODS='y' ;;
 			o)  ADD_MODS=$OPTARG ;;
+			M)  MOUNT_TARGET_ONLY='y' ;;
+			U)  UMOUNT_TARGET_ONLY='y' ;;
 			p)  PARTITION_ONLY='y' ;;
 			R)  FORCE_REFORMAT_ROOT='y' ;;
 			s)  USE_LOCAL_AUTHORIZED_KEYS='y' ;;
@@ -1185,17 +1208,26 @@ else
 	_do_header
 	_set_host_vars
 	get_armbian_image
-	apt_install_host # we need cryptsetup in next cmd
+	apt_install_host # _preclean requires cryptsetup
 	_preclean
+
+	[ "$UMOUNT_TARGET_ONLY" ] && exit
+
 	check_sdcard_name_and_params $ARG1
+	create_build_dir
+
+	[ "$MOUNT_TARGET_ONLY" ] && warn 'Mounting source and target and exiting at user request'
+
 	_get_user_vars
 	_test_sdcard_mounted
+
+	[ "$MOUNT_TARGET_ONLY" ] && _mount_target_and_exit
+
 	_warn_user_opts
 	_confirm_user_vars
 
 	[ "$IP_ADDRESS" == 'none' ] || get_authorized_keys
 
-	create_build_dir
 	[ "$NO_CLEANUP" ] || trap '_clean' EXIT
 
 	setup_loopmount
