@@ -178,15 +178,17 @@ _do_header() {
 }
 
 _warn_user_opts() {
-	local out
+	local out opt text
+
 	while read opt text; do
 		[ "$opt" ] || continue
-		if [ $(eval echo -n \$$opt) ]; then out+="  + $text\n"; fi
-	done <<-EOF
-		$USER_OPTS_INFO
-	EOF
+		if [ "${!opt}" ]; then
+			out+="  + $text\n"
+		fi
+	done <<<$USER_OPTS_INFO
+
 	if [ "$out" ]; then
-		warn      "  The following user options are in effect:"
+		warn      "\n  The following user options are in effect:"
 		warn_nonl "${out}"
 	fi
 }
@@ -267,12 +269,22 @@ _get_user_var() {
 			rmsg "  $desc must not be empty"
 			continue
 		}
+
 		if [ "$pat" ]; then
-			echo "${!var}" | egrep -qi "$pat" || {
+			local rpat=$pat
+			if [ "$pat" == 'bool' ]; then
+				rpat='^[ynYN]*$'
+				pat_errmsg="You must type 'y' or 'n'"
+			fi
+			echo "${!var}" | egrep -qi "$rpat" || {
 				rmsg "  ${!var}: $pat_errmsg"
 				continue
 			}
+			if [ "$pat" == 'bool' ]; then
+				if [[ ${!var} =~ ^[Yy]$ ]]; then eval "$var=yes"; else eval "$var="; fi
+			fi
 		fi
+
 		if [ "$vtest" ]; then
 			$vtest || continue
 		fi
@@ -281,11 +293,14 @@ _get_user_var() {
 }
 
 _get_user_vars() {
+
+	local dq='[0-9]{1,3}'
+
 	_get_user_var 'IP_ADDRESS' 'IP address' '' \
 		"Enter the IP address of the target machine.
 		Enter 'dhcp' for a dynamic IP or 'none' for no remote SSH unlocking support
 		IP address:" \
-		'^(dhcp|none|[0-9]{1,3}\.[0-9]{1,3}\.[0-9]+\.[0-9]{1,3})$' \
+		"^(dhcp|none|$dq\.$dq\.$dq\.$dq)$" \
 		'malformed IP address'
 	IP_ADDRESS=${IP_ADDRESS,,}
 
@@ -326,10 +341,8 @@ _get_user_vars() {
 		"Unlock the disk from the serial console.  WARNING: enabling this will
 		make it impossible to unlock the disk using the keyboard and monitor,
 		though unlocking via SSH will still work.
-		Enable serial console unlocking? (y/n):" \
-		'^[ynYN]*$' \
-		"You must type 'y' or 'n'"
-	if [[ $SERIAL_CONSOLE =~ ^[Yy]$ ]]; then SERIAL_CONSOLE='yes'; else SERIAL_CONSOLE='no'; fi
+		Enable unlocking via serial console? (y/n):" \
+		'bool'
 
 	true
 }
@@ -496,8 +509,8 @@ _confirm_user_vars() {
 	echo "  Target IP address:            $IP_ADDRESS"
 	echo "  Boot partition label:         $BOOTPART_LABEL"
 	echo "  Disk password:                $DISK_PASSWD"
-	echo "  Serial console unlocking:     $SERIAL_CONSOLE"
-	[ "$UNLOCKING_USERHOST" ] && echo "  user@host of unlocking machine: $UNLOCKING_USERHOST"
+	[ "$UNLOCKING_USERHOST" ] && echo "  user@host of unlocking host:  $UNLOCKING_USERHOST"
+	echo "  Serial console unlocking:     ${SERIAL_CONSOLE:-no}"
 	echo
 	_user_confirm '  Are these settings correct?' 'yes'
 }
@@ -529,9 +542,9 @@ _print_states() {
 _update_state_from_config_vars() {
 	[ -e $CONFIG_VARS_FILE ] || return 0
 	local reply
-	while read reply; do eval "c$reply"; done <<-EOF
-		$(cat $CONFIG_VARS_FILE)
-	EOF
+	while read reply; do
+		eval "c$reply"
+	done <<<$(cat $CONFIG_VARS_FILE)
 	local saved_states cfgvar_changed
 	saved_states="$(_print_states)"
 	cfgvar_changed=
@@ -700,7 +713,7 @@ copy_boot_loader() {
 
 _print_config_vars() {
 	local outfile=$1
-	local data="$(for i in $CONFIG_VARS; do echo "$i=${!i}"; done)"
+	local data="$(for i in $CONFIG_VARS; do echo "$i='${!i}'"; done)"
 	if [ "$outfile" ]; then echo "$data" > $outfile; else echo "$data"; fi
 }
 
