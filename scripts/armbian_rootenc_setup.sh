@@ -10,6 +10,7 @@ CONFIG_VARS='
 	ROOTFS_NAME
 	DISK_PASSWD
 	UNLOCKING_USERHOST
+	SERIAL_CONSOLE
 	IP_ADDRESS
 	NETMASK
 	ADD_ALL_MODS
@@ -586,6 +587,9 @@ _update_state_from_config_vars() {
 	[ $cDISK_PASSWD != $DISK_PASSWD ]        && cfgvar_changed+=' DISK_PASSWD' rootpart_copied='n'
 	[ "$UNLOCKING_USERHOST" -a "$cUNLOCKING_USERHOST" != "$UNLOCKING_USERHOST" ] && {
 		cfgvar_changed+=' UNLOCKING_USERHOST' target_configured='n'
+	}
+	[ "$cSERIAL_CONSOLE" != "$SERIAL_CONSOLE" ]  && {
+		cfgvar_changed+=' SERIAL_CONSOLE' target_configured='n'
 	}
 	[ $cIP_ADDRESS != $IP_ADDRESS ]          && cfgvar_changed+=' IP_ADDRESS' target_configured='n'
 	[ "$cNETMASK" != "$NETMASK" ]            && cfgvar_changed+=' NETMASK' target_configured='n'
