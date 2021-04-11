@@ -16,6 +16,7 @@ CONFIG_VARS='
 	ADD_ALL_MODS
 	ADD_MODS
 	USE_LOCAL_AUTHORIZED_KEYS
+	USB_GADGET
 '
 STATES='
 	card_partitioned
@@ -39,6 +40,7 @@ USER_OPTS_INFO="
 	ROOTENC_PAUSE              -  pause along the way
 	ROOTENC_IGNORE_APT_ERRORS  -  continue even if apt update fails
 	SERIAL_CONSOLE             -  enable disk unlocking via serial console
+	USB_GADGET                 -  enable disk unlocking via SSH over USB (g_ether)
 	VERBOSE                    -  produce verbose output
 "
 RSYNC_VERBOSITY='--info=progress2'
@@ -376,6 +378,13 @@ _get_user_vars() {
 		Enable unlocking via serial console? (y/n):" \
 		'bool'
 
+	_get_user_var 'USB_GADGET' 'disk unlocking via SSH over USB (g_ether)' '' \
+		"Unlock the disk via SSH over USB (g_ether).  Enable this only if your board
+		supports USB gadget mode, i.e. if it has a USB OTG port. WARNING: enabling this
+		will make it impossible to unlock the disk over the Ethernet interface (eth0).
+		Enable unlocking via SSH over USB? (y/n):" \
+		'bool'
+
 	true
 }
 
@@ -544,6 +553,7 @@ _confirm_user_vars() {
 	echo "  Disk password:                $DISK_PASSWD"
 	[ "$UNLOCKING_USERHOST" ] && echo "  user@host of unlocking host:  $UNLOCKING_USERHOST"
 	echo "  Serial console unlocking:     ${SERIAL_CONSOLE:-no}"
+	echo "  SSH over USB unlocking:       ${USB_GADGET:-no}"
 	echo
 	_user_confirm '  Are these settings correct?' 'yes'
 }
@@ -595,6 +605,7 @@ _update_state_from_config_vars() {
 	[ "$cNETMASK" != "$NETMASK" ]            && cfgvar_changed+=' NETMASK' target_configured='n'
 	[ "$cADD_ALL_MODS" != "$ADD_ALL_MODS" ]  && cfgvar_changed+=' ADD_ALL_MODS' target_configured='n'
 	[ "$cADD_MODS" != "$ADD_MODS" ]          && cfgvar_changed+=' ADD_MODS' target_configured='n'
+	[ "$cUSB_GADGET" != "$USB_GADGET" ]      && cfgvar_changed+=' USB_GADGET' target_configured='n'
 	[ "$IP_ADDRESS" -a "$cUSE_LOCAL_AUTHORIZED_KEYS" != "$USE_LOCAL_AUTHORIZED_KEYS" ] && {
 		cfgvar_changed+=' USE_LOCAL_AUTHORIZED_KEYS' target_configured='n'
 	}
@@ -959,7 +970,8 @@ bootlogo=false"
 # correct static IP address after 'IP='.  If it will be configured via
 # DHCP, omit the IP line entirely:
 edit_initramfs_conf() {
-	local file="$TARGET_ROOT/etc/initramfs-tools/initramfs.conf"
+	local file="$TARGET_ROOT/etc/initramfs-tools/initramfs.conf" dev='eth0'
+	[ "$USB_GADGET" ] && dev='usb0'
 	ed $file <<-'EOF'
 		g/^\s*IP=/s/^/# /
 		g/^\s*DEVICE=/d
@@ -968,13 +980,13 @@ edit_initramfs_conf() {
 	[ "$IP_ADDRESS" == 'dhcp' -o "$IP_ADDRESS" == 'none' ] || {
 		echo "IP=$IP_ADDRESS:::$NETMASK::$dev:off" >> $file
 	}
-	[ "$IP_ADDRESS" == 'none' ] || echo "DEVICE=eth0" >> $file
+	[ "$IP_ADDRESS" == 'none' ] || echo "DEVICE=$dev" >> $file
 	_display_file $file
 }
 
 edit_initramfs_modules() {
 	local modlist file hdr
-	[ "$ADD_ALL_MODS" -o "$ADD_MODS" ] && {
+	[ "$ADD_ALL_MODS" -o "$ADD_MODS" -o "$USB_GADGET" ] && {
 		if ! _kernels_match; then
 			warn 'Host and target kernels do not match.  Not adding modules to initramfs'
 		elif ! _distros_match; then
@@ -983,6 +995,7 @@ edit_initramfs_modules() {
 			local g_mods='libcomposite u_ether usb_f_rndis g_ether usb_f_eem'
 			[ "$ADD_ALL_MODS" ] && modlist=$(lsmod | cut -d ' ' -f1 | tail -n+2)
 			[ "$ADD_MODS" ]     && modlist+=$(echo; for m in ${ADD_MODS//,/ }; do echo $m; done)
+			[ "$USB_GADGET" ]   && modlist+=$(echo; for m in $g_mods;          do echo $m; done)
 		fi
 	}
 	file="$TARGET_ROOT/etc/initramfs-tools/modules"
@@ -1029,6 +1042,59 @@ DROPBEAR=y'
 		mkdir -p $dest
 		[ -e $file ] && grep -q '^DROPBEAR_OPTIONS="-p 2222"' $file || echo "$text" >> $file
 		_display_file $file
+	fi
+}
+
+netman_manage_usb0() {
+	local file bu_file text
+	file="$TARGET_ROOT/etc/NetworkManager/NetworkManager.conf"
+	bu_file="$file.rootenc.orig"
+	text='
+[device]
+match-device=interface-name:eth0
+managed=0
+match-device=interface-name:usb0
+managed=1'
+	if [ -e $file ]; then
+		if [ "$USB_GADGET" ]; then
+			grep -q '^match-device=interface-name:usb0' $file || {
+				/bin/cp $file $bu_file
+				echo "$text" >> $file
+			}
+		else
+			[ -e $bu_file ] && /bin/mv $bu_file $file
+		fi
+		_display_file $file
+	else
+		warn "$file does not exist, not enabling managed usb0"
+	fi
+}
+
+ifupdown_config_usb0() {
+	local file bu_file text
+	file="$TARGET_ROOT/etc/network/interfaces"
+	bu_file="$file.rootenc.orig"
+	text="
+
+auto usb0
+iface usb0 inet static
+	address $IP_ADDRESS
+	netmask $NETMASK
+"
+	if [ -e $file ]; then
+		if [ "$USB_GADGET" -a "$IP_ADDRESS" != 'dhcp' ]; then
+			grep -q '^auto usb0' $file || {
+				/bin/cp $file $bu_file
+				echo "$text" >> $file
+			}
+			systemctl mask network-manager
+		else
+			[ -e $bu_file ] && /bin/mv $bu_file $file
+			systemctl unmask network-manager
+		fi
+		_display_file $file
+	else
+		warn "$file does not exist, not configuring static usb0"
 	fi
 }
 
@@ -1125,6 +1191,8 @@ configure_target() {
 	create_etc_crypttab
 	create_fstab
 	edit_dropbear_cfg
+	netman_manage_usb0
+	ifupdown_config_usb0
 	[ "$IP_ADDRESS" == 'none' ] || create_cryptroot_unlock_sh
 	edit_armbianEnv
 	_debug_pause
