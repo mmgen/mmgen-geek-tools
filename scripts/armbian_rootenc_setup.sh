@@ -12,6 +12,7 @@ CONFIG_VARS='
 	UNLOCKING_USERHOST
 	IP_ADDRESS
 	ADD_ALL_MODS
+	ADD_MODS
 	USE_LOCAL_AUTHORIZED_KEYS
 '
 STATES='
@@ -22,18 +23,21 @@ STATES='
 	target_configured
 '
 USER_OPTS_INFO="
-	NO_CLEANUP                 no cleanup of mounts after program run
-	FORCE_REBUILD              force full rebuild
-	FORCE_RECONFIGURE          force reconfiguration
-	FORCE_REFORMAT_ROOT        force reformat of encrypted root partition
-	ADD_ALL_MODS               add all currently loaded modules to initramfs
-	USE_LOCAL_AUTHORIZED_KEYS  use local 'authorized_keys' file
-	PARTITION_ONLY             partition and create filesystems only
-	ERASE                      zero boot sector, boot partition and beginning of root partition
-	ROOTENC_REUSE_FS           reuse existing filesystems (for development only)
-	ROOTENC_TESTING            developer tweaks
-	ROOTENC_PAUSE              pause along the way
-	ROOTENC_IGNORE_APT_ERRORS  continue even if apt update fails
+	NO_CLEANUP                 -  no cleanup of mounts after program run
+	FORCE_REBUILD              -  force full rebuild
+	FORCE_RECONFIGURE          -  force reconfiguration
+	FORCE_REFORMAT_ROOT        -  force reformat of encrypted root partition
+	ADD_ALL_MODS               -  add all currently loaded modules to initramfs
+	ADD_MODS                   y  add specified modules to initramfs
+	USE_LOCAL_AUTHORIZED_KEYS  -  use local 'authorized_keys' file
+	PARTITION_ONLY             -  partition and create filesystems only
+	ERASE                      -  zero boot sector, boot partition and beginning of root partition
+	ROOTENC_REUSE_FS           -  reuse existing filesystems (for development only)
+	ROOTENC_TESTING            -  developer tweaks
+	ROOTENC_PAUSE              -  pause along the way
+	ROOTENC_IGNORE_APT_ERRORS  -  continue even if apt update fails
+	SERIAL_CONSOLE             -  enable disk unlocking via serial console
+	VERBOSE                    -  produce verbose output
 "
 RSYNC_VERBOSITY='--info=progress2'
 
@@ -47,6 +51,7 @@ print_help() {
              '-F'  Force a complete rebuild of target system
              '-m'  Add all currently loaded modules to the initramfs (may help
                    fix blank screen on bootup issues)
+             '-o'  Add specified modules to the initramfs (comma-separated list)
              '-p'  Partition and create filesystems only.  Do not copy data
              '-R'  Force reformat of encrypted root partition
              '-s'  Use 'authorized_keys' file from working directory, if available
@@ -178,12 +183,16 @@ _do_header() {
 }
 
 _warn_user_opts() {
-	local out opt text
+	local out opt have_optarg text
 
-	while read opt text; do
+	while read opt have_optarg text; do
 		[ "$opt" ] || continue
 		if [ "${!opt}" ]; then
-			out+="  + $text\n"
+			if [ $have_optarg == 'y' ]; then
+				out+="  + $text (${!opt})\n"
+			else
+				out+="  + $text\n"
+			fi
 		fi
 	done <<<$USER_OPTS_INFO
 
@@ -557,6 +566,7 @@ _update_state_from_config_vars() {
 	}
 	[ $cIP_ADDRESS != $IP_ADDRESS ]          && cfgvar_changed+=' IP_ADDRESS' target_configured='n'
 	[ "$cADD_ALL_MODS" != "$ADD_ALL_MODS" ]  && cfgvar_changed+=' ADD_ALL_MODS' target_configured='n'
+	[ "$cADD_MODS" != "$ADD_MODS" ]          && cfgvar_changed+=' ADD_MODS' target_configured='n'
 	[ "$IP_ADDRESS" -a "$cUSE_LOCAL_AUTHORIZED_KEYS" != "$USE_LOCAL_AUTHORIZED_KEYS" ] && {
 		cfgvar_changed+=' USE_LOCAL_AUTHORIZED_KEYS' target_configured='n'
 	}
@@ -936,13 +946,15 @@ edit_initramfs_conf() {
 
 edit_initramfs_modules() {
 	local modlist file hdr
-	[ "$ADD_ALL_MODS" ] && {
+	[ "$ADD_ALL_MODS" -o "$ADD_MODS" ] && {
 		if ! _kernels_match; then
 			warn 'Host and target kernels do not match.  Not adding modules to initramfs'
 		elif ! _distros_match; then
 			warn 'Host and target distros do not match.  Not adding modules to initramfs'
 		else
-			modlist=$(lsmod | cut -d ' ' -f1 | tail -n+2)
+			local g_mods='libcomposite u_ether usb_f_rndis g_ether usb_f_eem'
+			[ "$ADD_ALL_MODS" ] && modlist=$(lsmod | cut -d ' ' -f1 | tail -n+2)
+			[ "$ADD_MODS" ]     && modlist+=$(echo; for m in ${ADD_MODS//,/ }; do echo $m; done)
 		fi
 	}
 	file="$TARGET_ROOT/etc/initramfs-tools/modules"
@@ -1117,7 +1129,7 @@ _set_env_vars() {
 
 set -e
 
-while getopts hCdmfFpRsuvz OPT
+while getopts hCdmofFpRsuvz OPT
 do
 		case "$OPT" in
 			h)  print_help; exit ;;
@@ -1125,6 +1137,7 @@ do
 			F)  FORCE_REBUILD='y' ;;
 			f)  FORCE_RECONFIGURE='y' ;;
 			m)  ADD_ALL_MODS='y' ;;
+			o)  ADD_MODS=$OPTARG ;;
 			p)  PARTITION_ONLY='y' ;;
 			R)  FORCE_REFORMAT_ROOT='y' ;;
 			s)  USE_LOCAL_AUTHORIZED_KEYS='y' ;;
@@ -1134,7 +1147,7 @@ do
 			z)  ERASE='y' ;;
 			*)  exit ;;
 		esac
-	ORIG_OPTS+="-$OPT "
+	ORIG_OPTS+="-$OPT $OPTARG "
 done
 
 shift $((OPTIND-1))
