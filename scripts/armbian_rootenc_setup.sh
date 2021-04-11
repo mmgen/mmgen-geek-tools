@@ -11,6 +11,7 @@ CONFIG_VARS='
 	DISK_PASSWD
 	UNLOCKING_USERHOST
 	IP_ADDRESS
+	NETMASK
 	ADD_ALL_MODS
 	ADD_MODS
 	USE_LOCAL_AUTHORIZED_KEYS
@@ -321,6 +322,14 @@ _get_user_vars() {
 		'malformed IP address'
 	IP_ADDRESS=${IP_ADDRESS,,}
 
+	[[ $IP_ADDRESS =~ ^(dhcp|none)$ ]] || {
+		_get_user_var 'NETMASK' 'netmask' '255.255.255.0' \
+			"Enter the netmask of the target machine,
+			or hit ENTER for the default (%s): " \
+			"^($dq\.$dq\.$dq\.$dq)$" \
+			'malformed netmask'
+	}
+
 	_get_user_var 'BOOTPART_LABEL' 'boot partition label' 'ARMBIAN_BOOT' \
 		"Enter a boot partition label for the target machine,
 		or hit ENTER for the default (%s): " \
@@ -529,6 +538,7 @@ _confirm_user_vars() {
 	echo "  Target device:                /dev/$SDCARD_DEVNAME ($SD_INFO)"
 	echo "  Root filesystem device name:  /dev/mapper/$ROOTFS_NAME"
 	echo "  Target IP address:            $IP_ADDRESS"
+	[ "$NETMASK" ] && echo "  Target netmask:               $NETMASK"
 	echo "  Boot partition label:         $BOOTPART_LABEL"
 	echo "  Disk password:                $DISK_PASSWD"
 	[ "$UNLOCKING_USERHOST" ] && echo "  user@host of unlocking host:  $UNLOCKING_USERHOST"
@@ -578,6 +588,7 @@ _update_state_from_config_vars() {
 		cfgvar_changed+=' UNLOCKING_USERHOST' target_configured='n'
 	}
 	[ $cIP_ADDRESS != $IP_ADDRESS ]          && cfgvar_changed+=' IP_ADDRESS' target_configured='n'
+	[ "$cNETMASK" != "$NETMASK" ]            && cfgvar_changed+=' NETMASK' target_configured='n'
 	[ "$cADD_ALL_MODS" != "$ADD_ALL_MODS" ]  && cfgvar_changed+=' ADD_ALL_MODS' target_configured='n'
 	[ "$cADD_MODS" != "$ADD_MODS" ]          && cfgvar_changed+=' ADD_MODS' target_configured='n'
 	[ "$IP_ADDRESS" -a "$cUSE_LOCAL_AUTHORIZED_KEYS" != "$USE_LOCAL_AUTHORIZED_KEYS" ] && {
@@ -951,7 +962,7 @@ edit_initramfs_conf() {
 		wq
 	EOF
 	[ "$IP_ADDRESS" == 'dhcp' -o "$IP_ADDRESS" == 'none' ] || {
-		echo "IP=$IP_ADDRESS:::255.255.255.0::eth0:off" >> $file
+		echo "IP=$IP_ADDRESS:::$NETMASK::$dev:off" >> $file
 	}
 	[ "$IP_ADDRESS" == 'none' ] || echo "DEVICE=eth0" >> $file
 	_display_file $file
