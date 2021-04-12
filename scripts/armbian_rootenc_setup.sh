@@ -488,7 +488,7 @@ _get_device_maps() {
 	local dm_type=$1 varname="device_maps_$1" dm_name ls mp
 	eval "$varname="
 	for dm_name in $(dmsetup ls | awk '{print $1}'); do
-		[ $(lsblk --noheadings --nodeps -o fstype /dev/mapper/$dm_name) == 'ext4' ] || continue
+		[ "$(lsblk --noheadings --nodeps -o fstype /dev/mapper/$dm_name)" == 'ext4' ] || continue
 		ls=$(findmnt -n --source /dev/mapper/$dm_name | awk '{print $1}')
 		if [ "$ls" -a "$dm_type" == 'mounted_on_target' ]; then
 			for mp in $ls; do
