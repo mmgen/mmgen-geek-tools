@@ -225,7 +225,7 @@ check_sdcard_name_and_params() {
 	[ "${dev:0:5}" == '/dev/' ] || dev="/dev/$dev"
 	[ -e "$dev" ] || die "$dev does not exist"
 	chk="$(lsblk --noheadings --nodeps --list --output=TYPE $dev 2>/dev/null)"
-	[ "$chk" != 'disk' ] && {
+	[ "$chk" != 'disk' -a "$chk" != 'loop' ] && {
 		[ "$chk" == 'part' ] && die "$dev is a partition, not a block device!"
 		die "$dev is not a block device!"
 	}
@@ -263,6 +263,7 @@ _get_user_var() {
 		return 0
 	}
 
+	if [ "$pat" == 'bool' ]; then READOPTS='-n1' READNL="\n"; else READOPTS='' READNL=''; fi
 	while true; do
 		if [ -z "${!var}" -o "$seen_prompt" -o "$redo" ]; then
 			if [ "$seen_prompt" ]; then
@@ -282,7 +283,7 @@ _get_user_var() {
 				fi
 				seen_prompt=1
 			fi
-			eval "read $var"
+			eval "read $READOPTS $var"; echo -ne "$READNL"
 		fi
 		redo=1
 		if [ -z "${!var}" -a "$dfl" ]; then eval "$var=$dfl"; fi
@@ -779,9 +780,10 @@ partition_sd_card() {
 	p2_start=$((p1_end+1))
 	fdisk_cmds="o\nn\np\n1\n$START_SECTOR\n$p1_end\nn\np\n2\n$p2_start\n\nw\n"
 
-	set +e
+	set +e; trap - ERR # fdisk exits with error if partition table cannot be re-read
 	echo -e "$fdisk_cmds" | fdisk "/dev/$SDCARD_DEVNAME"
-	set -e
+	set -e; trap '_error_handler' ERR
+
 	do_partprobe
 
 	bname="$(lsblk --noheadings --list --output=NAME /dev/$BOOT_DEVNAME)"
