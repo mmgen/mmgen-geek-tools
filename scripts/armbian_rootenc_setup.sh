@@ -87,9 +87,9 @@ print_help() {
   connected and its clock correctly set.
 
   If remote unlocking via SSH is desired, the unlocking host must be reachable.
-  Alternatively, SSH public keys for the unlocking host or hosts may be listed
-  in the file 'authorized_keys' in the current directory.  This file has the
-  same format as a standard SSH 'authorized_keys' file.
+  Alternatively, SSH public keys for the unlocking host or hosts may be
+  provided in the file 'authorized_keys' in the current directory.  This file
+  has the same format as a standard SSH 'authorized_keys' file.
 
   Architecture of host and target (e.g. 64-bit or 32-bit ARM) must be the same.
 
@@ -434,16 +434,21 @@ _print_pkgs_to_install() {
 	case $1 in
 		'host')
 			case "$host_distro" in
-				focal|bionic|buster) pkgs='cryptsetup-bin ed' ;;
-				*)                   pkgs='cryptsetup ed'
-									 warn "Warning: unrecognized host distribution '$host_distro'" ;;
+				bionic|buster|focal|bullseye|jammy)
+					pkgs='cryptsetup-bin ed' ;;
+				*)
+					pkgs='cryptsetup-bin ed'
+					warn "Warning: unrecognized host distribution '$host_distro'" ;;
 			esac ;;
 		'target')
 			case "$target_distro" in
-				focal|buster) pkgs='cryptsetup-initramfs' pkgs_ssh='dropbear-initramfs' ;;
-				bionic)       pkgs='cryptsetup'           pkgs_ssh='dropbear-initramfs' ;;
-				*)            pkgs='cryptsetup'           pkgs_ssh='dropbear'
-							  warn "Warning: unrecognized target distribution '$target_distro'" ;;
+				buster|focal|bullseye|jammy)
+					pkgs='cryptsetup-initramfs' pkgs_ssh='dropbear-initramfs' ;;
+				bionic)
+					pkgs='cryptsetup' pkgs_ssh='dropbear-initramfs' ;;
+				*)
+					pkgs='cryptsetup-initramfs' pkgs_ssh='dropbear-initramfs'
+					warn "Warning: unrecognized target distribution '$target_distro'" ;;
 			esac
 			[ "$IP_ADDRESS" != 'none' ] && pkgs+=" $pkgs_ssh" ;;
 	esac
@@ -487,19 +492,21 @@ remove_build_dir() {
 _get_device_maps() {
 	local dm_type=$1 varname="device_maps_$1" dm_name ls mp
 	eval "$varname="
-	for dm_name in $(dmsetup ls | awk '{print $1}'); do
-		[ "$(lsblk --noheadings --nodeps -o fstype /dev/mapper/$dm_name)" == 'ext4' ] || continue
-		ls=$(findmnt -n --source /dev/mapper/$dm_name | awk '{print $1}')
+	while read dm_name; do
+		[ "$dm_name" == 'No devices found' ] && break
+		fstype="$(lsblk --noheadings --nodeps -o fstype "/dev/mapper/$dm_name")"
+		[ "$fstype" == 'ext4' ] || continue
+		ls=$(findmnt -n --source "/dev/mapper/$dm_name" | cut -f 1 -d ' ')
 		if [ "$ls" -a "$dm_type" == 'mounted_on_target' ]; then
-			for mp in $ls; do
+			while read mp; do
 				if [ "${mp: -${#TARGET_ROOT}}" == "$TARGET_ROOT" ]; then
-					eval "$varname+=$dm_name "
+					eval "$varname+='$dm_name '"
 				fi
-			done
+			done <<<"$ls"
 		elif [ -z "$ls" -a "$dm_type" == 'unmounted' ]; then
-			eval "$varname+=$dm_name "
+			eval "$varname+='$dm_name '"
 		fi
-	done
+	done <<<$(dmsetup ls | cut -f 1)
 	tmsg "$varname=[${!varname}]"
 }
 
