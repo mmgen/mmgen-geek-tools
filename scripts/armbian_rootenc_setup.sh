@@ -475,6 +475,7 @@ create_build_dir() {
 }
 
 umount_target() {
+	sleep 1
 	for i in $BOOT_ROOT $TARGET_ROOT; do
 		while mountpoint -q $i; do
 			umount -Rl $i
@@ -575,12 +576,14 @@ setup_loopmount() {
 }
 
 _umount_with_check() {
-	mountpoint -q $1 && umount $1
+	mountpoint -q $1 && sleep 1 && umount $1
 }
 
 update_config_vars_file() {
 	mount "/dev/$BOOT_DEVNAME" $BOOT_ROOT
 	_print_config_vars $CONFIG_VARS_FILE
+	
+	sleep 1
 	umount $BOOT_ROOT
 }
 
@@ -649,7 +652,7 @@ _add_state_file() {
 		[ "$cmd" == 'mount' ] && mount "/dev/$BOOT_DEVNAME" $BOOT_ROOT
 		mkdir -p "$BOOT_ROOT/.rootenc_install_state"
 		touch "$BOOT_ROOT/.rootenc_install_state/$state"
-		[ "$cmd" == 'mount' ] && umount $BOOT_ROOT
+		[ "$cmd" == 'mount' ] && sleep 1 && umount $BOOT_ROOT
 	fi
 	eval "$state='y'"
 	tmsg "added state file '$state'"
@@ -706,6 +709,7 @@ check_install_state() {
 }
 
 close_loopmount() {
+	sleep 1
 	while mountpoint -q $SRC_ROOT; do
 		umount $SRC_ROOT
 	done
@@ -824,6 +828,8 @@ copy_system_boot() {
 	_hide_output
 	[ -e "$BOOT_ROOT/boot" ] || (cd $BOOT_ROOT && ln -s . 'boot')
 	_add_state_file 'bootpart_copied'
+	
+	sleep 1
 	umount $BOOT_ROOT
 }
 
@@ -855,6 +861,7 @@ copy_system_root() {
 		mkdir -p "$TARGET_ROOT/boot"
 		touch "$TARGET_ROOT/root/.no_rootfs_resize"
 
+		sleep 1
 		umount $TARGET_ROOT
 	}
 
