@@ -3,7 +3,7 @@
 PATH="$PATH:/usr/sbin:/sbin"
 RED="\e[31;1m" GREEN="\e[32;1m" YELLOW="\e[33;1m" BLUE="\e[34;1m" PURPLE="\e[35;1m" RESET="\e[0m"
 PROGNAME=$(basename $0)
-TITLE='Armbian Encrypted  Root Filesystem          Setup'
+TITLE='Armbian Encrypted Root Filesystem Setup'
 CONFIG_VARS='
 	ARMBIAN_IMAGE
 	BOOTPART_LABEL
@@ -73,11 +73,14 @@ print_help() {
       ROOTFS_NAME        - device mapper name of target root filesystem
       IP_ADDRESS         - IP address of target (set to 'dhcp' for dynamic IP
                            or 'none' to disable remote SSH unlocking support)
+      NETMASK            - Netmask of target.  Defaults to 255.255.255.0
       BOOTPART_LABEL     - Boot partition label of target
       DISK_PASSWD        - Disk password of target root filesystem
       UNLOCKING_USERHOST - USER@HOST of remote unlocking host
       SERIAL_CONSOLE     - Set this to 'y' to enable disk unlocking from the
-                           serial console
+                           serial console, or 'n' to disable
+      USB_GADGET         - Set this to 'y' to enable disk unlocking via SSH over
+                           USB (g_ether), or 'n' to disable
 
 
                             INSTRUCTIONS FOR USE
@@ -172,7 +175,7 @@ _error_handler() {
 _do_header() {
 	echo
 	local reply
-	if banner=$(toilet --filter border --filter gay --width 51 -s -f smbraille "$TITLE" 2>/dev/null); then
+	if banner=$(toilet --filter=border --filter=gay --width=80 --font=term "*** $TITLE ***" 2>/dev/null); then
 		while read reply; do
 			echo -e "             $reply"
 		done <<-EOF
@@ -418,6 +421,7 @@ _test_sdcard_mounted() {
 
 get_authorized_keys() {
 	[ -e 'authorized_keys' -a "$USE_LOCAL_AUTHORIZED_KEYS" ] || {
+		mkdir -p 'authorized_keys'
 		rsync "$UNLOCKING_USERHOST:.ssh/id_*.pub" 'authorized_keys'
 	}
 }
@@ -435,7 +439,7 @@ _print_pkgs_to_install() {
 	case $1 in
 		'host')
 			case "$host_distro" in
-				bionic|buster|focal|bullseye|jammy)
+				bionic|buster|focal|bullseye|jammy|bookworm|noble)
 					pkgs='cryptsetup-bin ed' ;;
 				*)
 					pkgs='cryptsetup-bin ed'
@@ -443,7 +447,7 @@ _print_pkgs_to_install() {
 			esac ;;
 		'target')
 			case "$target_distro" in
-				buster|focal|bullseye|jammy)
+				buster|focal|bullseye|jammy|bookworm|noble)
 					pkgs='cryptsetup-initramfs' pkgs_ssh='dropbear-initramfs' ;;
 				bionic)
 					pkgs='cryptsetup' pkgs_ssh='dropbear-initramfs' ;;
@@ -909,6 +913,11 @@ copy_etc_files() {
 _set_target_vars() {
 	target_distro=$(chroot $TARGET_ROOT 'lsb_release' '--short' '--codename')
 	target_kernel=$(chroot $TARGET_ROOT 'ls' '/boot' | egrep '^vmlinu[xz]')
+	case $target_distro in
+		bionic|buster|focal) eth_dev='eth0' dropbear_dir='/etc/dropbear-initramfs' dropbear_conf='config' ;;
+		bullseye|jammy)      eth_dev='eth0' dropbear_dir='/etc/dropbear/initramfs' dropbear_conf='config' ;;
+		*)                   eth_dev='end0' dropbear_dir='/etc/dropbear/initramfs' dropbear_conf='dropbear.conf' ;;
+	esac
 	imsg "$(printf '%-8s %-28s %s' ''        'Host'       'Target')"
 	imsg "$(printf '%-8s %-28s %s' ''        '----'       '------')"
 	imsg "$(printf '%-8s %-28s %s' 'distro:' $host_distro $target_distro)"
@@ -979,7 +988,7 @@ bootlogo=false"
 # correct static IP address after 'IP='.  If it will be configured via
 # DHCP, omit the IP line entirely:
 edit_initramfs_conf() {
-	local file="$TARGET_ROOT/etc/initramfs-tools/initramfs.conf" dev='eth0'
+	local file="$TARGET_ROOT/etc/initramfs-tools/initramfs.conf" dev=$eth_dev
 	[ "$USB_GADGET" ] && dev='usb0'
 	ed $file <<-'EOF'
 		g/^\s*IP=/s/^/# /
@@ -1021,9 +1030,10 @@ edit_initramfs_modules() {
 }
 
 copy_authorized_keys() {
-	local dest="$TARGET_ROOT/etc/dropbear-initramfs"
+	local dest="$TARGET_ROOT$dropbear_dir"
 	mkdir -p $dest
-	/bin/cp 'authorized_keys' $dest
+	/bin/cat authorized_keys/* > "$dest/authorized_keys"
+	chmod 644 "$dest/authorized_keys"
 	_display_file "$dest/authorized_keys"
 }
 
@@ -1040,8 +1050,8 @@ tmpfs /tmp tmpfs defaults,nosuid 0 0"
 
 edit_dropbear_cfg() {
 	local dest file text
-	dest="$TARGET_ROOT/etc/dropbear-initramfs"
-	file="$dest/config"
+	dest="$TARGET_ROOT$dropbear_dir"
+	file="$dest/$dropbear_conf"
 	text='DROPBEAR_OPTIONS="-p 2222"
 DROPBEAR=y'
 	if [ "$IP_ADDRESS" == 'none' ]; then
@@ -1060,7 +1070,7 @@ netman_manage_usb0() {
 	bu_file="$file.rootenc.orig"
 	text='
 [device]
-match-device=interface-name:eth0
+match-device=interface-name:$eth_dev
 managed=0
 match-device=interface-name:usb0
 managed=1'
@@ -1128,6 +1138,13 @@ exit 0'
 
 # begin chroot functions:
 
+apt_remove_target() {
+	set +e
+	if [ "$IP_ADDRESS" == 'none' ]; then apt --yes purge 'dropbear-initramfs'; fi
+	apt --yes purge 'bash-completion' 'command-not-found'
+	set -e
+}
+
 apt_install_target() {
 	local pkgs=$(_print_pkgs_to_install 'target')
 	[ "$pkgs" ] && {
@@ -1140,10 +1157,6 @@ apt_install_target() {
 #		apt --yes purge $pkgs
 #		apt-get --yes --purge autoremove
 		dpkg --configure --pending --force-confdef
-		set +e
-		apt --yes purge 'bash-completion'
-		apt --yes purge 'command-not-found'
-		set -e
 		_apt_update
 		echo 'force-confdef' > /root/.dpkg.cfg
 		apt --yes install $pkgs
@@ -1162,6 +1175,10 @@ update_initramfs() {
 	local ver=$(echo /boot/vmlinu?-* | sed 's/.boot.vmlinu.-//')
 	update-initramfs -k $ver -u
 	_hide_output
+}
+
+gen_target_ssh_host_keys() {
+	ssh-keygen -A
 }
 
 check_initramfs() {
@@ -1292,8 +1309,10 @@ if [ "$ARG1" == 'in_target' ]; then
 	[ "$target_distro" == 'bionic' ] && {
 		echo 'export CRYPTSETUP=y' > '/etc/initramfs-tools/conf.d/cryptsetup'
 	}
+	apt_remove_target
 	apt_install_target
 	[ "$initramfs_updated" ] || update_initramfs
+	gen_target_ssh_host_keys
 	check_initramfs
 else
 	SCRIPT_DESC='Host script'
