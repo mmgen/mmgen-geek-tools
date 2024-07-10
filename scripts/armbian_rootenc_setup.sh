@@ -32,7 +32,7 @@ USER_OPTS_INFO="
 	FORCE_REFORMAT_ROOT        -  force reformat of encrypted root partition
 	ADD_ALL_MODS               -  add all currently loaded modules to initramfs
 	ADD_MODS                   y  add specified modules to initramfs
-	USE_LOCAL_AUTHORIZED_KEYS  -  use local 'authorized_keys' file
+	USE_LOCAL_AUTHORIZED_KEYS  -  use local 'authorized_keys' file if available
 	PARTITION_ONLY             -  partition and create filesystems only
 	ERASE                      -  zero boot sector, boot partition and beginning of root partition
 	ROOTENC_REUSE_FS           -  reuse existing filesystems (for development only)
@@ -47,7 +47,7 @@ RSYNC_VERBOSITY='--info=progress2'
 
 print_help() {
 	echo "  ${PROGNAME^^}: Create an Armbian image with encrypted root filesystem
-  USAGE:           $PROGNAME [options] <SD card device name>
+  USAGE:           $PROGNAME [options] <target device name (e.g. SD card)>
   OPTIONS:   '-h'  Print this help message
              '-C'  Don't perform unmounts or clean up build directory at exit
              '-d'  Produce tons of debugging output
@@ -440,9 +440,9 @@ _print_pkgs_to_install() {
 		'host')
 			case "$host_distro" in
 				bionic|buster|focal|bullseye|jammy|bookworm|noble)
-					pkgs='cryptsetup-bin ed' ;;
+					pkgs='cryptsetup ed' ;;
 				*)
-					pkgs='cryptsetup-bin ed'
+					pkgs='cryptsetup ed'
 					warn "Warning: unrecognized host distribution '$host_distro'" ;;
 			esac ;;
 		'target')
@@ -462,7 +462,7 @@ _print_pkgs_to_install() {
 	done
 }
 
-apt_install_host() {
+apt_install_host_pkgs() {
 	local pkgs=$(_print_pkgs_to_install 'host')
 	[ "$pkgs" ] && {
 		_apt_update
@@ -548,8 +548,8 @@ _clean() {
 }
 
 get_armbian_image() {
-	ARMBIAN_IMAGE="$(ls *.img)"
-	[ "$ARMBIAN_IMAGE" ] || die 'You must place an Armbian image in the current directory!'
+	ARMBIAN_IMAGE="$(echo *.img)"
+	[ "$ARMBIAN_IMAGE" != '*.img' ] || die 'No image file found: You must place an Armbian image in the current directory!'
 	local count=$(echo "$ARMBIAN_IMAGE" | wc -l)
 	[ "$count" == 1 ] || die "More than one image file present!:\n$ARMBIAN_IMAGE"
 }
@@ -1138,14 +1138,14 @@ exit 0'
 
 # begin chroot functions:
 
-apt_remove_target() {
+apt_remove_target_pkgs() {
 	set +e
 	if [ "$IP_ADDRESS" == 'none' ]; then apt --yes purge 'dropbear-initramfs'; fi
 	apt --yes purge 'bash-completion' 'command-not-found'
 	set -e
 }
 
-apt_install_target() {
+apt_install_target_pkgs() {
 	local pkgs=$(_print_pkgs_to_install 'target')
 	[ "$pkgs" ] && {
 		echo "target packages to install: $pkgs"
@@ -1173,7 +1173,7 @@ update_initramfs() {
 	[ "$ROOTENC_TESTING" ] && return 0
 	_show_output
 	local ver=$(echo /boot/vmlinu?-* | sed 's/.boot.vmlinu.-//')
-	update-initramfs -k $ver -u
+	update-initramfs -k $ver -c
 	_hide_output
 }
 
@@ -1183,24 +1183,24 @@ gen_target_ssh_host_keys() {
 
 check_initramfs() {
 	local text chk count
-	text="$(lsinitramfs /boot/initrd.img*)"
+	text="$(lsinitramfs /boot/initrd.img-*)"
 	set +e
 
 	chk=$(echo "$text" | grep 'cryptsetup')
 	count=$(echo "$chk" | wc -l)
-	[ "$count" -gt 5 ] || { echo "$text"; die 'Cryptsetup scripts missing in initramfs image'; }
 	_display_file "lsinitramfs /boot/initrd.img* | grep 'cryptsetup'" "$chk"
+	[ "$count" -gt 5 ] || { echo "$text"; die 'Cryptsetup scripts missing in initramfs image'; }
 
 	[ "$IP_ADDRESS" == 'none' ] || {
 		chk=$(echo "$text" | grep 'dropbear')
 		count=$(echo "$chk" | wc -l)
-		[ "$count" -gt 5 ] || { echo "$text"; die 'Dropbear scripts missing in initramfs image'; }
 		_display_file "lsinitramfs /boot/initrd.img* | grep 'dropbear'" "$chk"
+		[ "$count" -gt 5 ] || { echo "$text"; die 'Dropbear scripts missing in initramfs image'; }
 
 		chk=$(echo "$text" | grep 'authorized_keys')
 		count=$(echo "$chk" | wc -l)
-		[ "$count" -eq 1 ] || { echo "$text"; die 'authorized_keys missing in initramfs image'; }
 		_display_file "lsinitramfs /boot/initrd.img* | grep 'authorized_keys'" "$chk"
+		[ "$count" -eq 1 ] || { echo "$text"; die 'authorized_keys missing in initramfs image'; }
 	}
 	set -e
 }
@@ -1299,7 +1299,11 @@ export HOME='/root'
 
 [ "$DEBUG" ] && set -x
 
-ARG1=$1; shift
+ARG1=$1
+
+[ "$ARG1" ] || die 'You must supply a target device name'
+
+shift
 
 _set_env_vars $@
 
@@ -1309,8 +1313,8 @@ if [ "$ARG1" == 'in_target' ]; then
 	[ "$target_distro" == 'bionic' ] && {
 		echo 'export CRYPTSETUP=y' > '/etc/initramfs-tools/conf.d/cryptsetup'
 	}
-	apt_remove_target
-	apt_install_target
+	apt_remove_target_pkgs
+	apt_install_target_pkgs
 	[ "$initramfs_updated" ] || update_initramfs
 	gen_target_ssh_host_keys
 	check_initramfs
@@ -1319,7 +1323,7 @@ else
 	_do_header
 	_set_host_vars
 	get_armbian_image
-	apt_install_host # _preclean requires cryptsetup
+	apt_install_host_pkgs # _preclean requires cryptsetup
 	_preclean
 
 	[ "$UMOUNT_TARGET_ONLY" ] && exit
