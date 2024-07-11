@@ -420,6 +420,12 @@ _test_sdcard_mounted() {
 }
 
 get_authorized_keys() {
+	if [ -f 'authorized_keys' ]; then
+		rm -rf /tmp/armbian_rootenc_build-authorized_keys_file
+		mv 'authorized_keys' /tmp/armbian_rootenc_build-authorized_keys_file
+		mkdir 'authorized_keys'
+		mv /tmp/armbian_rootenc_build-authorized_keys_file 'authorized_keys'
+	fi
 	[ -e 'authorized_keys' -a "$USE_LOCAL_AUTHORIZED_KEYS" ] || {
 		mkdir -p 'authorized_keys'
 		rsync "$UNLOCKING_USERHOST:.ssh/id_*.pub" 'authorized_keys'
@@ -1084,7 +1090,7 @@ managed=1'
 			[ -e $bu_file ] && /bin/mv $bu_file $file
 		fi
 		_display_file $file
-	else
+	elif [ "$USB_GADGET" ]; then
 		warn "$file does not exist, not enabling managed usb0"
 	fi
 }
@@ -1112,7 +1118,7 @@ iface usb0 inet static
 			systemctl unmask network-manager
 		fi
 		_display_file $file
-	else
+	elif [ "$USB_GADGET" ]; then
 		warn "$file does not exist, not configuring static usb0"
 	fi
 }
