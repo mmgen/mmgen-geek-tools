@@ -896,6 +896,7 @@ _copy_to_target() {
 	local fn=$1
 	if [ -e $fn ]; then
 		echo "Copying '$fn'"
+		rm -rf $TARGET_ROOT/$fn
 		cat $fn > $TARGET_ROOT/$fn
 	else
 		imsg "Unable to copy '$fn' to target (file does not exist)"
@@ -920,10 +921,11 @@ copy_etc_files() {
 _set_target_vars() {
 	target_distro=$(chroot $TARGET_ROOT 'lsb_release' '--short' '--codename')
 	target_kernel=$(chroot $TARGET_ROOT 'ls' '/boot' | egrep '^vmlinu[xz]')
+	target_armbian_keyring_signed=
 	case $target_distro in
 		bionic|buster|focal) eth_dev='eth0' dropbear_dir='/etc/dropbear-initramfs' dropbear_conf='config' ;;
 		bullseye|jammy)      eth_dev='eth0' dropbear_dir='/etc/dropbear/initramfs' dropbear_conf='config' ;;
-		*)                   eth_dev='end0' dropbear_dir='/etc/dropbear/initramfs' dropbear_conf='dropbear.conf' ;;
+		bookworm|noble|*)    eth_dev='end0' dropbear_dir='/etc/dropbear/initramfs' dropbear_conf='dropbear.conf' target_armbian_keyring_signed='y' ;;
 	esac
 	imsg "$(printf '%-8s %-28s %s' ''        'Host'       'Target')"
 	imsg "$(printf '%-8s %-28s %s' ''        '----'       '------')"
@@ -945,8 +947,17 @@ copy_etc_files_distro_specific() {
 	if _distros_match; then
 		for i in $files; do _copy_to_target $i; done
 	else
-		warn 'Warning: host and target distros do not match:'
-		for i in $files; do imsg "  not copying $i"; done
+		warn 'Warning: host and target distros do not match, attempting to rewrite files:'
+		for i in $files; do
+			imsg "  rewriting $i"
+			if [ "$target_armbian_keyring_signed" -a $(basename $i) == 'armbian.list' ]; then
+				repl='deb [signed-by=\/usr\/share\/keyrings\/armbian.gpg] http'
+				sed "s/$host_distro/$target_distro/g;s/deb http/$repl/" <$i >$TARGET_ROOT/$i
+			else
+				sed "s/$host_distro/$target_distro/g" <$i >$TARGET_ROOT/$i
+			fi
+			_display_file $TARGET_ROOT$i
+		done
 	fi
 }
 
