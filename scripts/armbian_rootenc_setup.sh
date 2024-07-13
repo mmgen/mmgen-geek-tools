@@ -70,6 +70,7 @@ print_help() {
   For non-interactive operation, set the following variables in your environment
   or on the command line:
 
+      ARMBIAN_IMAGE      - Armbian image file
       ROOTFS_NAME        - device mapper name of target root filesystem
       IP_ADDRESS         - IP address of target (set to 'dhcp' for dynamic IP
                            or 'none' to disable remote SSH unlocking support)
@@ -556,7 +557,7 @@ _clean() {
 get_armbian_image() {
 	ARMBIAN_IMAGE="$(echo *.img)"
 	[ "$ARMBIAN_IMAGE" != '*.img' ] || die 'No image file found: You must place an Armbian image in the current directory!'
-	local count=$(echo "$ARMBIAN_IMAGE" | wc -l)
+	local count=$(echo "$ARMBIAN_IMAGE" | wc -w)
 	[ "$count" == 1 ] || die "More than one image file present!:\n$ARMBIAN_IMAGE"
 }
 
@@ -1328,7 +1329,9 @@ else
 	SCRIPT_DESC='Host script'
 	_do_header
 	_set_host_vars
-	get_armbian_image
+
+	[ "$ARMBIAN_IMAGE" ] || get_armbian_image
+
 	apt_install_host_pkgs # _preclean requires cryptsetup
 	_preclean
 
