@@ -115,7 +115,9 @@ print_help() {
      are desired, they must precede the device name.
 
   If the board has an eMMC, it may be used as the target device instead of
-  an SD card." | less
+  an SD card.  Depending on your platform, you may need to run ‘armbian-config’
+  and select ‘Install to internal storage’ -> ‘Install/Update the bootloader
+  on eMMC’ to enable booting from the eMMC" | less
 }
 
 pause() {
@@ -248,7 +250,7 @@ check_sdcard_name_and_params() {
 		if [ "$non_removable" ]; then warn "      $non_removable"; fi
 		if [ "$nodos" ]; then warn "      $nodos"; fi
 		if [ "$oversize" ]; then warn "      $oversize"; fi
-		_user_confirm '  Are you sure this is the correct device of your blank SD card?' 'no'
+		_user_confirm '  Are you sure this is the device you want to install on?' 'no'
 	fi
 	SDCARD_DEVNAME=${dev:5}
 	[ "${SDCARD_DEVNAME%[0-9]}" == $SDCARD_DEVNAME ] || part_sep='p'
@@ -940,6 +942,18 @@ _set_target_vars() {
 			target_armbian_keyring_signed='y' ;;
 	esac
 
+	local net_dev
+	for net_dev in eth0 end0 enp1s0 enp2s0; do
+		if ip -br link | grep -q ^$net_dev; then
+			host_eth_dev=$net_dev
+			break
+		fi
+	done
+
+	[ "$host_eth_dev" ] || die 'Unable to find default wired network device'
+
+	_distros_match && eth_dev=$host_eth_dev
+
 	imsg "$(printf '%-8s %-28s %s' ''        'Host'       'Target')"
 	imsg "$(printf '%-8s %-28s %s' ''        '----'       '------')"
 	imsg "$(printf '%-8s %-28s %s' 'distro:' $host_distro $target_distro)"
@@ -993,8 +1007,7 @@ _display_file() {
 }
 
 edit_armbianEnv() {
-	local file text console_arg
-	file="$TARGET_ROOT/boot/armbianEnv.txt"
+	local file=$TARGET_ROOT/$1 text console_arg
 	ed $file <<-'EOF'
 		g/^\s*rootdev=/d
 		g/^\s*console=/d
@@ -1170,12 +1183,10 @@ exit 0'
 # begin chroot functions:
 
 apt_remove_target_pkgs() {
-	set +e
 	if [ "$IP_ADDRESS" == 'none' ]; then
-		apt --yes purge 'dropbear-initramfs'
+		apt --yes purge 'dropbear-initramfs' || :
 	fi
-	apt --yes purge 'bash-completion' 'command-not-found'
-	set -e
+	apt --yes purge 'bash-completion' 'command-not-found' || :
 }
 
 apt_install_target_pkgs() {
@@ -1253,7 +1264,12 @@ configure_target() {
 	netman_manage_usb0
 	ifupdown_config_usb0
 	[ "$IP_ADDRESS" == 'none' ] || create_cryptroot_unlock_sh
-	edit_armbianEnv
+	armbian_env="boot/armbianEnv.txt"
+	if [ -e $SRC_ROOT/$armbian_env ]; then
+		edit_armbianEnv $armbian_env
+	else
+		die "could not find $SRC_ROOT/$armbian_env or $SRC_ROOT/$extlinux_conf"
+	fi
 	_debug_pause
 
 	_show_output # this must be done before entering chroot
