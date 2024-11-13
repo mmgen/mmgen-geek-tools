@@ -1024,6 +1024,32 @@ edit_armbianEnv() {
 console=$console_arg
 bootlogo=false"
 	echo "$text" >> $file
+
+	_display_file $file
+}
+
+edit_extlinux_conf() {
+	local file=$TARGET_ROOT/$1 text console_arg
+	/bin/cp $SRC_ROOT/$1 $TARGET_ROOT/$1
+
+	case $SERIAL_CONSOLE in
+		'yes') console_pat='console=tty1' ;;
+		*)     console_pat='console=ttyS\S+' ;;
+	esac
+
+	ed --extended-regexp $file <<-EOF
+		s/root=\S+/root=\/dev\/mapper\/$ROOTFS_NAME/
+		s/$console_pat *//
+		wq
+	EOF
+
+	if grep -q 'splash plymouth' $file; then
+		ed --extended-regexp $file <<-EOF
+			s/splash plymouth\S+/splash=verbose/
+			wq
+		EOF
+	fi
+
 	_display_file $file
 }
 
@@ -1265,8 +1291,11 @@ configure_target() {
 	ifupdown_config_usb0
 	[ "$IP_ADDRESS" == 'none' ] || create_cryptroot_unlock_sh
 	armbian_env="boot/armbianEnv.txt"
+	extlinux_conf="boot/extlinux/extlinux.conf"
 	if [ -e $SRC_ROOT/$armbian_env ]; then
 		edit_armbianEnv $armbian_env
+	elif [ -e $SRC_ROOT/$extlinux_conf ]; then
+		edit_extlinux_conf $extlinux_conf
 	else
 		die "could not find $SRC_ROOT/$armbian_env or $SRC_ROOT/$extlinux_conf"
 	fi
