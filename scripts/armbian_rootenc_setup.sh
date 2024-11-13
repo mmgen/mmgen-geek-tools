@@ -919,14 +919,27 @@ copy_etc_files() {
 }
 
 _set_target_vars() {
+
 	target_distro=$(chroot $TARGET_ROOT 'lsb_release' '--short' '--codename')
 	target_kernel=$(chroot $TARGET_ROOT 'ls' '/boot' | egrep '^vmlinu[xz]')
 	target_armbian_keyring_signed=
+
 	case $target_distro in
-		bionic|buster|focal) eth_dev='eth0' dropbear_dir='/etc/dropbear-initramfs' dropbear_conf='config' ;;
-		bullseye|jammy)      eth_dev='eth0' dropbear_dir='/etc/dropbear/initramfs' dropbear_conf='config' ;;
-		bookworm|noble|*)    eth_dev='end0' dropbear_dir='/etc/dropbear/initramfs' dropbear_conf='dropbear.conf' target_armbian_keyring_signed='y' ;;
+		bionic|buster|focal)
+			eth_dev='eth0'
+			dropbear_dir='/etc/dropbear-initramfs'
+			dropbear_conf='config' ;;
+		bullseye|jammy)
+			eth_dev='eth0'
+			dropbear_dir='/etc/dropbear/initramfs'
+			dropbear_conf='config' ;;
+		bookworm|noble|*)
+			eth_dev='end0'
+			dropbear_dir='/etc/dropbear/initramfs'
+			dropbear_conf='dropbear.conf'
+			target_armbian_keyring_signed='y' ;;
 	esac
+
 	imsg "$(printf '%-8s %-28s %s' ''        'Host'       'Target')"
 	imsg "$(printf '%-8s %-28s %s' ''        '----'       '------')"
 	imsg "$(printf '%-8s %-28s %s' 'distro:' $host_distro $target_distro)"
@@ -1158,7 +1171,9 @@ exit 0'
 
 apt_remove_target_pkgs() {
 	set +e
-	if [ "$IP_ADDRESS" == 'none' ]; then apt --yes purge 'dropbear-initramfs'; fi
+	if [ "$IP_ADDRESS" == 'none' ]; then
+		apt --yes purge 'dropbear-initramfs'
+	fi
 	apt --yes purge 'bash-completion' 'command-not-found'
 	set -e
 }
