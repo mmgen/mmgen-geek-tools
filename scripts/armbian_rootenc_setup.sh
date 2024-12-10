@@ -242,20 +242,18 @@ check_sdcard_name_and_params() {
 		[ "$chk" == 'part' ] && die "$dev is a partition, not a block device!"
 		die "$dev is not a block device!"
 	}
-	local pttype size nodos oversize removable non_removable part_sep
+	local pttype size oversize removable non_removable part_sep
 	pttype=$(blkid --output=udev $dev | grep TYPE | cut -d '=' -f2)
 	size="$(lsblk --noheadings --nodeps --list --output=SIZE --bytes $dev 2>/dev/null)"
 	removable="$(lsblk --noheadings --nodeps --list --output=RM $dev 2>/dev/null)"
-	nodos=$([ "$pttype" -a "$pttype" != 'dos' ] && echo "Partition type is ${pttype^^}") || true
 	oversize=$([ $size -gt 137438953472 ] && echo 'Size is > 128GiB') || true
 	non_removable=$([ $removable -ne 0 ] || echo 'Device is non-removable')
 	SD_INFO="$(lsblk --noheadings --nodeps --list --output=VENDOR,MODEL,SIZE $dev 2>/dev/null)"
 	SD_INFO=${SD_INFO//  / }
-	if [ "$nodos" -o "$oversize" -o "$non_removable" ]; then
+	if [ "$oversize" -o "$non_removable" ]; then
 		warn "  $dev ($SD_INFO) doesn’t appear to be an SD card"
 		warn "  for the following reasons:"
 		if [ "$non_removable" ]; then warn "      $non_removable"; fi
-		if [ "$nodos" ]; then warn "      $nodos"; fi
 		if [ "$oversize" ]; then warn "      $oversize"; fi
 		_user_confirm '  Are you sure this is the device you want to install on?' 'no'
 	fi
@@ -464,7 +462,7 @@ _print_pkgs_to_install() {
 	case $1 in
 		'host')
 			case "$host_distro" in
-				bionic|buster|focal|bullseye|jammy|bookworm|noble)
+				bionic|buster|focal|bullseye|jammy|bookworm|noble|trixie)
 					pkgs='cryptsetup ed' ;;
 				*)
 					pkgs='cryptsetup ed'
@@ -472,7 +470,7 @@ _print_pkgs_to_install() {
 			esac ;;
 		'target')
 			case "$target_distro" in
-				buster|focal|bullseye|jammy|bookworm|noble)
+				buster|focal|bullseye|jammy|bookworm|noble|trixie)
 					pkgs='cryptsetup-initramfs' pkgs_ssh='dropbear-initramfs' ;;
 				bionic)
 					pkgs='cryptsetup' pkgs_ssh='dropbear-initramfs' ;;
@@ -581,6 +579,25 @@ get_armbian_image() {
 	[ "$count" == 1 ] || die "More than one image file present!:\n$ARMBIAN_IMAGE"
 }
 
+get_partition_info() {
+	local cmdout
+	cmdout=$(fdisk --list --output='Start' $ARMBIAN_IMAGE)
+	partition_table_type=$(echo "$cmdout" | grep '^Disklabel' | cut --delimiter=' ' --fields=3)
+	case $partition_table_type in
+		'gpt')
+			cmdout=$(fdisk --list-details --output='Start,Type-UUID' $ARMBIAN_IMAGE)
+			read start_sector partition_type_uuid <<<$(echo "$cmdout" | tail --lines=1)
+			;;
+		'dos')
+			read start_sector <<<$(echo "$cmdout" | tail --lines=1)
+			;;
+		*) die "$partition_table_type: unrecognized partition table type!" ;;
+	esac
+	[ $((start_sector % 8)) -eq 0 ] || die "start sector: $start_sector: first partition misaligned!"
+	boot_partition_sectors=409600 # 200MB
+	pu_msg "Image partition table type: ${partition_table_type^^}"
+}
+
 _confirm_user_vars() {
 	echo
 	echo "  Armbian image:                $ARMBIAN_IMAGE"
@@ -602,8 +619,6 @@ setup_loopmount() {
 	LOOP_DEV=$(losetup -f)
 	losetup -P $LOOP_DEV $ARMBIAN_IMAGE
 	mount ${LOOP_DEV}p1 $SRC_ROOT
-	start_sector=$(fdisk -l $LOOP_DEV -o Start | tail -n1 | tr -d ' ') # usually 32768
-	boot_partition_sectors=409600 # 200MB
 }
 
 _umount_with_check() {
@@ -779,24 +794,22 @@ erase_boot_sector_and_first_partition() {
 }
 
 create_partition_label() {
+	local label_code
 	pu_msg "Creating new partition label on /dev/$SDCARD_DEVNAME"
-	local fdisk_cmds="o\nw\n"
+	case $partition_table_type in 'dos') label_code='o';; 'gpt') label_code='g';; esac
 	set +e
-	echo -e "$fdisk_cmds" | fdisk "/dev/$SDCARD_DEVNAME"
+	echo -e "$label_code\nw\n" | fdisk "/dev/$SDCARD_DEVNAME"
 	set -e
 	do_partprobe
 }
 
 copy_boot_loader() {
-	local count
-	count=$((start_sector / 2048))
-	pu_msg "Copying boot loader ($start_sector sectors, ${count}M):"
+	local bs=4096 skip count
+	case $partition_table_type in 'dos') skip=0;; 'gpt') skip=8;; esac # LBA8 (0x8000): boot loader magic string
+	count=$((start_sector / 8 - $skip))
+	pu_msg "Copying boot loader ($count 4K blocks [$((count*8)) sectors], starting at $skip blocks [$((skip*8)) sectors]):"
 	_show_output
-	dd  if=$ARMBIAN_IMAGE \
-		of=/dev/$SDCARD_DEVNAME \
-		status=progress \
-		bs=$((512*2048)) \
-		count=$count
+	dd if=$ARMBIAN_IMAGE of="/dev/$SDCARD_DEVNAME" status='progress' bs=$bs count=$count skip=$skip seek=$skip
 	_hide_output
 	do_partprobe
 }
@@ -808,16 +821,32 @@ _print_config_vars() {
 }
 
 create_partitions() {
-	local p1_end p2_start fdisk_cmds bname rname fstype
+	local p1_end p2_start cmds1 cmds2 bname rname fstype
 	p1_end=$((start_sector + boot_partition_sectors - 1))
 	p2_start=$((p1_end + 1))
-	fdisk_cmds="o\nn\np\n1\n$start_sector\n$p1_end\nn\np\n2\n$p2_start\n\nw\n"
+
+	case $partition_table_type in
+		'gpt')
+			cmds1="g\nn\n1\n$start_sector\n$p1_end\nn\n2\n$p2_start\n\n"
+			cmds2="t\n1\n$partition_type_uuid\nt\n2\n$partition_type_uuid\n"
+			;;
+		'dos')
+			cmds1="o\nn\np\n1\n$start_sector\n$p1_end\nn\np\n2\n$p2_start\n\n"
+			cmds2=""
+			;;
+	esac
 
 	set +e; trap - ERR # fdisk exits with error if partition table cannot be re-read
-	echo -e "$fdisk_cmds" | fdisk "/dev/$SDCARD_DEVNAME"
+	echo -e "${cmds1}${cmds2}w\n" | fdisk "/dev/$SDCARD_DEVNAME"
 	set -e; trap '_error_handler' ERR
 
 	do_partprobe
+
+	[ "$VERBOSE" ] && {
+		pu_msg 'Done partitioning:'
+		fdisk --list "/dev/$SDCARD_DEVNAME"
+		imsg ""
+	}
 
 	bname="$(lsblk --noheadings --list --output=NAME /dev/$BOOT_DEVNAME)"
 	[ "$bname" == $BOOT_DEVNAME ] || die 'Partitioning failed!'
@@ -966,7 +995,7 @@ _set_target_vars() {
 			dfl_eth_dev='eth0'
 			dropbear_dir='/etc/dropbear/initramfs'
 			dropbear_conf='config' ;;
-		bookworm|noble|*)
+		bookworm|noble|trixie|*)
 			dfl_eth_dev='end0'
 			dropbear_dir='/etc/dropbear/initramfs'
 			dropbear_conf='dropbear.conf'
@@ -1435,6 +1464,8 @@ else
 	_set_host_vars
 
 	[ "$ARMBIAN_IMAGE" ] || get_armbian_image
+
+	get_partition_info
 
 	apt_install_host_pkgs # _preclean requires cryptsetup
 	_preclean
