@@ -117,7 +117,7 @@ print_help() {
   If the board has an eMMC, it may be used as the target device instead of
   an SD card.  Depending on your platform, you may need to run ‘armbian-config’
   and select ‘Install to internal storage’ -> ‘Install/Update the bootloader
-  on eMMC’ to enable booting from the eMMC" | less
+  on eMMC’ to enable booting from the eMMC." | less
 }
 
 pause() {
@@ -140,14 +140,18 @@ gmsg()      { echo -e "$GREEN$1$RESET" >&$stdout_dup; no_fmsg=1; }
 pu_msg()    { echo -e "$PURPLE$1$RESET" >&$stdout_dup; no_fmsg=1; }
 
 do_partprobe() {
-	if [ "$VERBOSE" ]; then partprobe; else partprobe 2>/dev/null; fi
+	if [ "$VERBOSE" ]; then
+		partprobe
+	else
+		partprobe 2>/dev/null
+	fi
 	no_fmsg=1
 }
 
 _show_output() { [ "$VERBOSE" ] || exec 1>&$stdout_dup 2>&$stderr_dup; }
 _hide_output() { [ "$VERBOSE" ] || exec &>'/dev/null'; }
 
-bail() { exit; }
+bailout() { exit; }
 die() {
 	echo -e "$RED$1$RESET" >&$stdout_dup
 	no_fmsg=1
@@ -558,7 +562,9 @@ _clean() {
 
 get_armbian_image() {
 	ARMBIAN_IMAGE="$(echo *.img)"
-	[ "$ARMBIAN_IMAGE" != '*.img' ] || die 'No image file found: You must place an Armbian image in the current directory!'
+	[ "$ARMBIAN_IMAGE" != '*.img' ] || {
+		die 'No image file found: You must place an Armbian image in the current directory!'
+	}
 	local count=$(echo "$ARMBIAN_IMAGE" | wc -w)
 	[ "$count" == 1 ] || die "More than one image file present!:\n$ARMBIAN_IMAGE"
 }
@@ -583,8 +589,8 @@ setup_loopmount() {
 	LOOP_DEV=$(losetup -f)
 	losetup -P $LOOP_DEV $ARMBIAN_IMAGE
 	mount ${LOOP_DEV}p1 $SRC_ROOT
-	START_SECTOR=$(fdisk -l $LOOP_DEV -o Start | tail -n1 | tr -d ' ') # usually 32768
-	BOOT_SECTORS=409600 # 200MB
+	start_sector=$(fdisk -l $LOOP_DEV -o Start | tail -n1 | tr -d ' ') # usually 32768
+	boot_partition_sectors=409600 # 200MB
 }
 
 _umount_with_check() {
@@ -746,8 +752,8 @@ _user_confirm() {
 
 erase_boot_sector_and_first_partition() {
 	local sectors count
-	sectors=$((START_SECTOR+BOOT_SECTORS+100))
-	count=$(((sectors/8192)+1))
+	sectors=$((start_sector + boot_partition_sectors + 100))
+	count=$((sectors / 8192 + 1))
 	pu_msg "Erasing up to beginning of second partition ($sectors sectors, ${count}M):"
 	_show_output
 	dd  if=/dev/zero \
@@ -769,8 +775,8 @@ create_partition_label() {
 
 copy_boot_loader() {
 	local count
-	count=$((START_SECTOR/2048))
-	pu_msg "Copying boot loader ($START_SECTOR sectors, ${count}M):"
+	count=$((start_sector / 2048))
+	pu_msg "Copying boot loader ($start_sector sectors, ${count}M):"
 	_show_output
 	dd  if=$ARMBIAN_IMAGE \
 		of=/dev/$SDCARD_DEVNAME \
@@ -787,11 +793,11 @@ _print_config_vars() {
 	if [ "$outfile" ]; then echo "$data" > $outfile; else echo "$data"; fi
 }
 
-partition_sd_card() {
+create_partitions() {
 	local p1_end p2_start fdisk_cmds bname rname fstype
-	p1_end=$((START_SECTOR+BOOT_SECTORS-1))
-	p2_start=$((p1_end+1))
-	fdisk_cmds="o\nn\np\n1\n$START_SECTOR\n$p1_end\nn\np\n2\n$p2_start\n\nw\n"
+	p1_end=$((start_sector + boot_partition_sectors - 1))
+	p2_start=$((p1_end + 1))
+	fdisk_cmds="o\nn\np\n1\n$start_sector\n$p1_end\nn\np\n2\n$p2_start\n\nw\n"
 
 	set +e; trap - ERR # fdisk exits with error if partition table cannot be re-read
 	echo -e "$fdisk_cmds" | fdisk "/dev/$SDCARD_DEVNAME"
@@ -816,13 +822,10 @@ partition_sd_card() {
 _do_partition() {
 	imsg "All data on /dev/$SDCARD_DEVNAME ($SD_INFO) will be destroyed!!!"
 	_user_confirm 'Are you sure you want to continue?' 'no'
-	if [ "$ERASE" ]; then
-		erase_boot_sector_and_first_partition
-	else
-		create_partition_label
-	fi
+	[ "$ERASE" ] && erase_boot_sector_and_first_partition
+	create_partition_label
 	copy_boot_loader
-	partition_sd_card
+	create_partitions
 }
 
 copy_system_boot() {
