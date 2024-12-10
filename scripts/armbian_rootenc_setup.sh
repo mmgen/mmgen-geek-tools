@@ -17,6 +17,7 @@ CONFIG_VARS='
 	ADD_MODS
 	USE_LOCAL_AUTHORIZED_KEYS
 	USB_GADGET
+	ETH_DEV
 '
 STATES='
 	card_partitioned
@@ -41,6 +42,7 @@ USER_OPTS_INFO="
 	ROOTENC_IGNORE_APT_ERRORS  -  continue even if apt update fails
 	SERIAL_CONSOLE             -  enable disk unlocking via serial console
 	USB_GADGET                 -  enable disk unlocking via SSH over USB (g_ether)
+	ETH_DEV                    -  select the network device manually (default: auto)
 	VERBOSE                    -  produce verbose output
 "
 RSYNC_VERBOSITY='--info=progress2'
@@ -82,6 +84,7 @@ print_help() {
                            serial console, or 'n' to disable
       USB_GADGET         - Set this to 'y' to enable disk unlocking via SSH over
                            USB (g_ether), or 'n' to disable
+      ETH_DEV            - Select the network device manually (default: auto)
 
 
                             INSTRUCTIONS FOR USE
@@ -322,6 +325,15 @@ _get_user_var() {
 		fi
 		break
 	done
+}
+
+_check_eth_dev() {
+	if [ "$ETH_DEV" ]; then
+		ip link show $ETH_DEV || {
+			warn "User-selected network device '$ETH_DEV' could not be found"
+			_user_confirm "Are you sure you want to continue?" "no"
+		}
+	fi
 }
 
 _get_user_vars() {
@@ -581,6 +593,7 @@ _confirm_user_vars() {
 	[ "$UNLOCKING_USERHOST" ] && echo "  user@host of unlocking host:  $UNLOCKING_USERHOST"
 	echo "  Serial console unlocking:     ${SERIAL_CONSOLE:-no}"
 	echo "  SSH over USB unlocking:       ${USB_GADGET:-no}"
+	echo "  Ethernet device:              ${ETH_DEV:-auto}"
 	echo
 	_user_confirm '  Are these settings correct?' 'yes'
 }
@@ -633,6 +646,7 @@ _update_state_from_config_vars() {
 	[ "$cADD_ALL_MODS" != "$ADD_ALL_MODS" ]  && cfgvar_changed+=' ADD_ALL_MODS' target_configured='n'
 	[ "$cADD_MODS" != "$ADD_MODS" ]          && cfgvar_changed+=' ADD_MODS' target_configured='n'
 	[ "$cUSB_GADGET" != "$USB_GADGET" ]      && cfgvar_changed+=' USB_GADGET' target_configured='n'
+	[ "$cETH_DEV" != "$ETH_DEV" ]            && cfgvar_changed+=' ETH_DEV' target_configured='n'
 	[ "$IP_ADDRESS" -a "$cUSE_LOCAL_AUTHORIZED_KEYS" != "$USE_LOCAL_AUTHORIZED_KEYS" ] && {
 		cfgvar_changed+=' USE_LOCAL_AUTHORIZED_KEYS' target_configured='n'
 	}
@@ -923,44 +937,59 @@ copy_etc_files() {
 	set -e
 }
 
+_print_net_dev() {
+	local text net_pfx
+	text="$(ip --brief link)"
+	for net_pfx in eth enp end eno enP enD enO en; do
+		grepout="$(echo "$text" | grep ^$net_pfx)" || true
+		if [ "$grepout" ]; then
+			echo "$grepout" | head --lines=1 | cut --delimiter=' ' --field=1
+			return 0
+		fi
+	done
+}
+
 _set_target_vars() {
 
 	target_distro=$(chroot $TARGET_ROOT 'lsb_release' '--short' '--codename')
 	target_kernel=$(chroot $TARGET_ROOT 'ls' '/boot' | egrep '^vmlinu[xz]')
 	target_armbian_keyring_signed=
 
+	local dfl_eth_dev
+
 	case $target_distro in
 		bionic|buster|focal)
-			eth_dev='eth0'
+			dfl_eth_dev='eth0'
 			dropbear_dir='/etc/dropbear-initramfs'
 			dropbear_conf='config' ;;
 		bullseye|jammy)
-			eth_dev='eth0'
+			dfl_eth_dev='eth0'
 			dropbear_dir='/etc/dropbear/initramfs'
 			dropbear_conf='config' ;;
 		bookworm|noble|*)
-			eth_dev='end0'
+			dfl_eth_dev='end0'
 			dropbear_dir='/etc/dropbear/initramfs'
 			dropbear_conf='dropbear.conf'
 			target_armbian_keyring_signed='y' ;;
 	esac
 
-	local net_dev
-	for net_dev in eth0 end0 enp1s0 enp2s0; do
-		if ip -br link | grep -q ^$net_dev; then
-			host_eth_dev=$net_dev
-			break
-		fi
-	done
+	host_eth_dev=$(_print_net_dev)
 
 	[ "$host_eth_dev" ] || die 'Unable to find default wired network device'
 
-	_distros_match && eth_dev=$host_eth_dev
+	if [ "$ETH_DEV" ]; then
+		eth_dev=$ETH_DEV
+	elif _distros_match; then
+		eth_dev=$host_eth_dev
+	else
+		eth_dev=$dfl_eth_dev
+	fi
 
 	imsg "$(printf '%-8s %-28s %s' ''        'Host'       'Target')"
 	imsg "$(printf '%-8s %-28s %s' ''        '----'       '------')"
 	imsg "$(printf '%-8s %-28s %s' 'distro:' $host_distro $target_distro)"
 	imsg "$(printf '%-8s %-28s %s' 'kernel:' $host_kernel $target_kernel)"
+	imsg "network device: $YELLOW$eth_dev$RESET"
 }
 
 _distros_match() {
@@ -1401,6 +1430,7 @@ if [ "$ARG1" == 'in_target' ]; then
 	check_initramfs
 else
 	SCRIPT_DESC='Host script'
+	_check_eth_dev
 	_do_header
 	_set_host_vars
 
