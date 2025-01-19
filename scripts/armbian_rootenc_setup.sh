@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 PATH="$PATH:/usr/sbin:/sbin"
 RED="\e[31;1m" GREEN="\e[32;1m" YELLOW="\e[33;1m" BLUE="\e[34;1m" PURPLE="\e[35;1m" RESET="\e[0m"
@@ -558,6 +558,20 @@ _preclean() {
 	remove_build_dir
 }
 
+_print_success_msg() {
+	gmsg "All done!"
+	imsg ""
+	imsg "  You may now shut down your board, switch removable media if applicable,"
+	imsg "  and restart."
+	if [ "$IP_ADDRESS" != "none" ]; then
+		imsg ""
+		imsg "  To unlock the disk on the target machine, execute the following from the"
+		imsg "  unlocking host:"
+		imsg ""
+		imsg "      ssh -p 2222 root@${IP_ADDRESS/dhcp/TARGET_IP}"
+	fi
+}
+
 _clean() {
 	pu_msg "Cleaning up, please wait..."
 	_show_output
@@ -568,6 +582,8 @@ _clean() {
 	_close_device_maps 'mounted_on_target'
 	[ -e 'authorized_keys' -a -z "$USE_LOCAL_AUTHORIZED_KEYS" ] && shred -u 'authorized_keys'
 	remove_build_dir
+	[ "$build_success" ] && _print_success_msg
+	true
 }
 
 get_armbian_image() {
@@ -607,7 +623,7 @@ _confirm_user_vars() {
 	[ "$NETMASK" ] && echo "  Target netmask:               $NETMASK"
 	echo "  Boot partition label:         $BOOTPART_LABEL"
 	echo "  Disk password:                $DISK_PASSWD"
-	[ "$UNLOCKING_USERHOST" ] && echo "  user@host of unlocking host:  $UNLOCKING_USERHOST"
+	[ "$UNLOCKING_USERHOST" ] && echo "  unlocking user@host:          $UNLOCKING_USERHOST"
 	echo "  Serial console unlocking:     ${SERIAL_CONSOLE:-no}"
 	echo "  SSH over USB unlocking:       ${USB_GADGET:-no}"
 	echo "  Ethernet device:              ${ETH_DEV:-auto}"
@@ -907,7 +923,7 @@ copy_system_root() {
 
 		pu_msg "Copying system to encrypted root partition:"
 		_show_output
-		rsync $RSYNC_VERBOSITY --archive --exclude=boot $SRC_ROOT/* $TARGET_ROOT
+		rsync $RSYNC_VERBOSITY --archive --exclude='boot' --exclude='var/cache/apt/archives' $SRC_ROOT/* $TARGET_ROOT
 		_hide_output
 		sync
 
@@ -1224,18 +1240,12 @@ ifupdown_config_usb0() {
 	local file bu_file text
 	file="$TARGET_ROOT/etc/network/interfaces"
 	bu_file="$file.rootenc.orig"
-	text="
-
-auto usb0
-iface usb0 inet static
-	address $IP_ADDRESS
-	netmask $NETMASK
-"
+	text="\nauto usb0\niface usb0 inet static\n\taddress $IP_ADDRESS\n\tnetmask $NETMASK"
 	if [ -e $file ]; then
 		if [ "$USB_GADGET" -a "$IP_ADDRESS" != 'dhcp' ]; then
 			grep -q '^auto usb0' $file || {
 				/bin/cp $file $bu_file
-				echo "$text" >> $file
+				echo -e "$text" >> $file
 			}
 			systemctl mask network-manager
 		else
@@ -1269,11 +1279,15 @@ exit 0'
 
 # begin chroot functions:
 
+_pkg_remove() {
+	dpkg -s $1 2>/dev/null | grep ^Status | grep -q installed && apt-get --yes purge $1 || :
+}
+
 apt_remove_target_pkgs() {
-	if [ "$IP_ADDRESS" == 'none' ]; then
-		apt --yes purge 'dropbear-initramfs' || :
-	fi
-	apt --yes purge 'bash-completion' 'command-not-found' || :
+	[ "$IP_ADDRESS" == 'none' ] && _pkg_remove 'dropbear-initramfs'
+	_pkg_remove 'bash-completion'
+	_pkg_remove 'command-not-found'
+	true
 }
 
 apt_install_target_pkgs() {
@@ -1504,10 +1518,5 @@ else
 	[ "$target_configured" == 'n' ]      && configure_target
 
 	sync
-	gmsg 'All done!'
-
-	if [ "$IP_ADDRESS" != 'none' ]; then
-		imsg "To unlock the target disk, execute the following from the unlocking host:"
-		imsg "    ssh -p 2222 root@${IP_ADDRESS/dhcp/TARGET_IP}"
-	fi
+	build_success=1
 fi
