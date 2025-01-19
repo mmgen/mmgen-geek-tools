@@ -382,14 +382,11 @@ _get_user_vars() {
 
 	if [ "$IP_ADDRESS" == 'none' ]; then
 		UNLOCKING_USERHOST=
-	elif [ -e 'authorized_keys' -a "$USE_LOCAL_AUTHORIZED_KEYS" ]; then
-		UNLOCKING_USERHOST=
 	else
 		_get_user_var 'UNLOCKING_USERHOST' 'USER@HOST' '' \
 			"Enter the user@host of the machine you'll be unlocking from:" \
 			'\S+@\S+' \
-			'malformed USER@HOST' \
-			'_test_unlocking_host_available'
+			'malformed USER@HOST'
 	fi
 
 	_get_user_var 'SERIAL_CONSOLE' 'serial console unlocking' '' \
@@ -437,15 +434,13 @@ _test_sdcard_mounted() {
 }
 
 get_authorized_keys() {
-	if [ -f 'authorized_keys' ]; then
-		rm -rf /tmp/armbian_rootenc_build-authorized_keys_file
-		mv 'authorized_keys' /tmp/armbian_rootenc_build-authorized_keys_file
-		mkdir 'authorized_keys'
-		mv /tmp/armbian_rootenc_build-authorized_keys_file 'authorized_keys'
-	fi
-	[ -e 'authorized_keys' -a "$USE_LOCAL_AUTHORIZED_KEYS" ] || {
-		mkdir -p 'authorized_keys'
-		rsync "$UNLOCKING_USERHOST:.ssh/id_*.pub" 'authorized_keys'
+	[ -f 'authorized_keys' ] && rm -rf 'authorized_keys' # remove legacy file if present
+	authorized_keys_dir="authorized_keys-$UNLOCKING_USERHOST"
+	[ -e $authorized_keys_dir -a "$USE_LOCAL_AUTHORIZED_KEYS" ] || {
+		_test_unlocking_host_available
+		mkdir -p $authorized_keys_dir
+		rsync "$UNLOCKING_USERHOST:.ssh/id_*.pub" $authorized_keys_dir
+		NEW_AUTHORIZED_KEYS='y'
 	}
 }
 
@@ -580,7 +575,6 @@ _clean() {
 	umount_target
 	update_config_vars_file
 	_close_device_maps 'mounted_on_target'
-	[ -e 'authorized_keys' -a -z "$USE_LOCAL_AUTHORIZED_KEYS" ] && shred -u 'authorized_keys'
 	remove_build_dir
 	[ "$build_success" ] && _print_success_msg
 	true
@@ -662,6 +656,9 @@ _update_state_from_config_vars() {
 	local saved_states cfgvar_changed
 	saved_states="$(_print_states)"
 	cfgvar_changed=
+
+	[ "$NEW_AUTHORIZED_KEYS" ] && cfgvar_changed+=' NEW_AUTHORIZED_KEYS' target_configured='n'
+
 	[ $cARMBIAN_IMAGE != $ARMBIAN_IMAGE ]    && cfgvar_changed+=' ARMBIAN_IMAGE' card_partitioned='n'
 	[ $cBOOTPART_LABEL != $BOOTPART_LABEL ]  && cfgvar_changed+=' BOOTPART_LABEL' bootpart_label_created='n'
 	[ $cROOTFS_NAME != $ROOTFS_NAME ]        && cfgvar_changed+=' ROOTFS_NAME' target_configured='n'
@@ -1180,7 +1177,7 @@ edit_initramfs_modules() {
 copy_authorized_keys() {
 	local dest="$TARGET_ROOT$dropbear_dir"
 	mkdir -p $dest
-	/bin/cat authorized_keys/* > "$dest/authorized_keys"
+	/bin/cat $authorized_keys_dir/* > "$dest/authorized_keys"
 	chmod 644 "$dest/authorized_keys"
 	_display_file "$dest/authorized_keys"
 }
