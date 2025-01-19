@@ -18,6 +18,7 @@ CONFIG_VARS='
 	USE_LOCAL_AUTHORIZED_KEYS
 	USB_GADGET
 	ETH_DEV
+	NETCFG_IFUPDOWN
 '
 STATES='
 	card_partitioned
@@ -44,6 +45,7 @@ USER_OPTS_INFO="
 	USB_GADGET                 -  enable disk unlocking via SSH over USB (g_ether)
 	ETH_DEV                    -  select the network device manually (default: auto)
 	VERBOSE                    -  produce verbose output
+	NETCFG_IFUPDOWN            -  force configuration of network interface using ifupdown
 "
 RSYNC_VERBOSITY='--info=progress2'
 
@@ -55,6 +57,8 @@ print_help() {
              '-d'  Produce tons of debugging output
              '-f'  Force reconfiguration of target system
              '-F'  Force a complete rebuild of target system
+             '-I'  Force configuration of target system network interface using
+                   ifupdown (/etc/network/interfaces)
              '-m'  Add all currently loaded modules to the initramfs (may help
                    fix blank screen on bootup issues)
              '-o'  Add specified modules to the initramfs (comma-separated list)
@@ -473,6 +477,7 @@ _print_pkgs_to_install() {
 					pkgs='cryptsetup-initramfs' pkgs_ssh='dropbear-initramfs'
 					warn "Warning: unrecognized target distribution '$target_distro'" ;;
 			esac
+			[ "$NETCFG_IFUPDOWN" == 'y' ] && pkgs+=" ifupdown"
 			[ "$IP_ADDRESS" != 'none' ] && pkgs+=" $pkgs_ssh" ;;
 	esac
 	for i in $pkgs; do
@@ -675,6 +680,7 @@ _update_state_from_config_vars() {
 	[ "$cADD_MODS" != "$ADD_MODS" ]          && cfgvar_changed+=' ADD_MODS' target_configured='n'
 	[ "$cUSB_GADGET" != "$USB_GADGET" ]      && cfgvar_changed+=' USB_GADGET' target_configured='n'
 	[ "$cETH_DEV" != "$ETH_DEV" ]            && cfgvar_changed+=' ETH_DEV' target_configured='n'
+	[ "$cNETCFG_IFUPDOWN" != "$NETCFG_IFUPDOWN" ] && cfgvar_changed+=' NETCFG_IFUPDOWN' target_configured='n'
 	[ "$IP_ADDRESS" -a "$cUSE_LOCAL_AUTHORIZED_KEYS" != "$USE_LOCAL_AUTHORIZED_KEYS" ] && {
 		cfgvar_changed+=' USE_LOCAL_AUTHORIZED_KEYS' target_configured='n'
 	}
@@ -1312,6 +1318,29 @@ apt_install_target_pkgs() {
 	true
 }
 
+ifupdown_config_eth0() {
+	local dir file text
+	dir="/etc/network/interfaces.d"
+	mkdir -p $dir
+	file="$dir/$eth_dev"
+	rm -rf $file
+	if [ "$NETCFG_IFUPDOWN" == 'y' ]; then
+		if [ "$IP_ADDRESS" == 'dhcp' ]; then
+			text="auto $eth_dev\niface $eth_dev inet dhcp"
+		else
+			text="auto $eth_dev\niface $eth_dev inet static\n\taddress $IP_ADDRESS\n\tnetmask $NETMASK"
+		fi
+		systemctl -q is-enabled 'networking' || { systemctl unmask 'networking'; systemctl enable 'networking'; }
+		systemctl -q is-enabled 'networking' || die "fatal error: unable to enable networking service (ifupdown)"
+		echo -e "$text" > $file
+		_display_file $file
+	else
+		systemctl -q is-enabled 'networking' && systemctl mask 'networking'
+		systemctl -q is-enabled 'networking' && die "fatal error: unable to mask networking service"
+		true
+	fi
+}
+
 update_initramfs() {
 	[ "$ROOTENC_TESTING" ] && return 0
 	_show_output
@@ -1376,7 +1405,7 @@ configure_target() {
 
 	_show_output # this must be done before entering chroot
 	/bin/cp $0 $TARGET_ROOT
-	export 'ROOTFS_NAME' 'IP_ADDRESS' 'target_distro' 'ROOTENC_TESTING' 'ROOTENC_PAUSE' 'ROOTENC_IGNORE_APT_ERRORS' 'APT_UPGRADE'
+	export 'ROOTFS_NAME' 'IP_ADDRESS' 'target_distro' 'ROOTENC_TESTING' 'ROOTENC_PAUSE' 'ROOTENC_IGNORE_APT_ERRORS' 'APT_UPGRADE' 'eth_dev'
 
 	chroot $TARGET_ROOT "./$PROGNAME" $ORIG_OPTS 'in_target'
 
@@ -1410,13 +1439,14 @@ _mount_target_and_exit() {
 
 set -e
 
-while getopts hCfFmo:MUpRsudvz OPT
+while getopts hCfFImo:MUpRsudvz OPT
 do
 		case "$OPT" in
 			h)  print_help; exit ;;
 			C)  NO_CLEANUP='y' ;;
 			f)  FORCE_RECONFIGURE='y' ;;
 			F)  FORCE_REBUILD='y' ;;
+			I)  NETCFG_IFUPDOWN='y' ;;
 			m)  ADD_ALL_MODS='y' ;;
 			o)  ADD_MODS=$OPTARG ;;
 			M)  MOUNT_TARGET_ONLY='y' ;;
@@ -1466,6 +1496,7 @@ if [ "$ARG1" == 'in_target' ]; then
 	}
 	apt_remove_target_pkgs
 	apt_install_target_pkgs
+	ifupdown_config_eth0
 	[ "$initramfs_updated" ] || update_initramfs
 	gen_target_ssh_host_keys
 	check_initramfs
