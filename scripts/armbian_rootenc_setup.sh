@@ -820,12 +820,13 @@ create_partition_label() {
 }
 
 copy_boot_loader() {
-	local bs=4096 skip count
-	case $partition_table_type in 'dos') skip=0;; 'gpt') skip=8;; esac # LBA8 (0x8000): boot loader magic string
-	count=$((start_sector / 8 - $skip))
-	pu_msg "Copying boot loader ($count 4K blocks [$((count*8)) sectors], starting at $skip blocks [$((skip*8)) sectors]):"
+	local skip count
+	# GPT bootloader starts at LBA 8 (0x8000, sector 64):
+	case $partition_table_type in 'dos') skip=0;; 'gpt') skip=64;; esac
+	count=$((start_sector - skip))
+	pu_msg "Copying boot loader ($count sectors, starting at sector $skip [LBA $((skip / 8))]):"
 	_show_output
-	dd if=$ARMBIAN_IMAGE of="/dev/$SDCARD_DEVNAME" status='progress' bs=$bs count=$count skip=$skip seek=$skip
+	dd if=$ARMBIAN_IMAGE of="/dev/$SDCARD_DEVNAME" status='progress' bs=512 count=$count skip=$skip seek=$skip
 	_hide_output
 	do_partprobe
 }
