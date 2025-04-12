@@ -19,7 +19,7 @@ Code repository:
 Code repository mirrors:
 [Github](https://github.com/mmgen/mmgen-geek-tools) |
 [Gitlab](https://gitlab.com/mmgen/mmgen-geek-tools) |
-[Gitflic](https://gitflic.ru/project/mmgen/mmgen-geek-tools)     
+[Codeberg](https://codeberg.org/mmgen/mmgen-geek-tools)     
 [Keybase](https://keybase.io/mmgen) |
 [Twitter](https://twitter.com/TheMMGenProject) |
 [Reddit](https://www.reddit.com/user/mmgen-py) |

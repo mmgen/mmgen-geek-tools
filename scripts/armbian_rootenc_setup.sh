@@ -609,7 +609,7 @@ get_partition_info() {
 		*) die "$partition_table_type: unrecognized partition table type!" ;;
 	esac
 	[ $((start_sector % 8)) -eq 0 ] || die "start sector: $start_sector: first partition misaligned!"
-	boot_partition_sectors=409600 # 200MB
+	boot_partition_sectors=819200 # 400MB
 	pu_msg "Image partition table type: ${partition_table_type^^}"
 }
 
@@ -989,7 +989,7 @@ copy_etc_files() {
 _print_net_dev() {
 	local text net_pfx
 	text="$(ip --brief link)"
-	for net_pfx in eth enp end eno enP enD enO en; do
+	for net_pfx in eth enp end eno enP enD enO en lan; do
 		grepout="$(echo "$text" | grep ^$net_pfx)" || true
 		if [ "$grepout" ]; then
 			echo "$grepout" | head --lines=1 | cut --delimiter=' ' --field=1
@@ -1156,9 +1156,7 @@ edit_initramfs_conf() {
 edit_initramfs_modules() {
 	local modlist file hdr
 	[ "$ADD_ALL_MODS" -o "$ADD_MODS" -o "$USB_GADGET" ] && {
-		if ! _kernels_match; then
-			warn 'Host and target kernels do not match.  Not adding modules to initramfs'
-		elif ! _distros_match; then
+		if ! _distros_match; then
 			warn 'Host and target distros do not match.  Not adding modules to initramfs'
 		else
 			local g_mods='libcomposite u_ether usb_f_rndis g_ether usb_f_eem'
