@@ -1051,14 +1051,15 @@ _kernels_match() {
 }
 
 copy_etc_files_distro_specific() {
-	local files='/etc/apt/sources.list /etc/apt/sources.list.d/armbian.list'
+	local files="/etc/apt/sources.list $(echo /etc/apt/sources.list.d/*.{sources,list})"
 	if _distros_match; then
 		for f in $files; do
-			_copy_to_target $f
+			[ -e "$f" ] && _copy_to_target $f
 		done
 	else
 		warn 'Warning: host and target distros do not match, attempting to rewrite files:'
 		for f in $files; do
+			[ -e "$f" ] || continue
 			imsg "  rewriting $f"
 			if [ "$target_armbian_keyring_signed" -a $(basename $f) == 'armbian.list' ]; then
 				repl='deb [signed-by=\/usr\/share\/keyrings\/armbian.gpg] http'
