@@ -15,7 +15,6 @@ CONFIG_VARS='
 	NETMASK
 	ADD_ALL_MODS
 	ADD_MODS
-	USE_LOCAL_AUTHORIZED_KEYS
 	USB_GADGET
 	ETH_DEV
 	NETCFG_IFUPDOWN
@@ -34,7 +33,6 @@ USER_OPTS_INFO="
 	FORCE_REFORMAT_ROOT        -  force reformat of encrypted root partition
 	ADD_ALL_MODS               -  add all currently loaded modules to initramfs
 	ADD_MODS                   y  add specified modules to initramfs
-	USE_LOCAL_AUTHORIZED_KEYS  -  use local 'authorized_keys' file if available
 	PARTITION_ONLY             -  partition and create filesystems only
 	ERASE                      -  zero boot sector, boot partition and beginning of root partition
 	ROOTENC_REUSE_FS           -  reuse existing filesystems (for development only)
@@ -66,8 +64,6 @@ print_help() {
              '-U'  Unmount source and target systems and exit
              '-p'  Partition and create filesystems only.  Do not copy data
              '-R'  Force reformat of encrypted root partition
-             '-s'  Use 'authorized_keys' file from working directory, if available
-                   (see below)
              '-v'  Be more verbose
              '-u'  Perform an 'apt upgrade' after each 'apt update'
              '-z'  Erase boot sector and first partition of SD card before partitioning
@@ -95,12 +91,15 @@ print_help() {
 
   This script must be invoked as superuser on a running Armbian system.
   Packages will be installed using APT, so the system must be Internet-
-  connected and its clock correctly set.
+  connected, fully upgraded, and have its clock correctly set.  After a
+  kernel upgrade the system must be rebooted.
 
-  If remote unlocking via SSH is desired, the unlocking host must be reachable.
-  Alternatively, SSH public keys for the unlocking host or hosts may be
-  provided in the file 'authorized_keys' in the current directory.  This file
-  has the same format as a standard SSH 'authorized_keys' file.
+  If remote unlocking via SSH is desired, the unlocking host should be
+  reachable.  If it is not, SSH public keys for unlocking host (or hosts)
+  may be provided in the file ‘authorized_keys’ in the current directory.
+  This file has the same format as the standard SSH ‘authorized_keys’ file.
+  Alternatively, the directory ‘authorized_keys.d’ may be created and SSH
+  public key or ‘authorized_keys’ files placed in it instead.
 
   Architecture of host and target (e.g. 64-bit or 32-bit ARM) must be the same.
 
@@ -438,13 +437,21 @@ _test_sdcard_mounted() {
 }
 
 get_authorized_keys() {
-	[ -f 'authorized_keys' ] && rm -rf 'authorized_keys' # remove legacy file if present
-	authorized_keys_dir="authorized_keys-$UNLOCKING_USERHOST"
-	[ -e $authorized_keys_dir -a "$USE_LOCAL_AUTHORIZED_KEYS" ] || {
-		_test_unlocking_host_available
-		mkdir -p $authorized_keys_dir
-		rsync "$UNLOCKING_USERHOST:.ssh/id_*.pub" $authorized_keys_dir
-		NEW_AUTHORIZED_KEYS='y'
+	authorized_keys_dir="authorized_keys.d"
+	[ -e $authorized_keys_dir ] || {
+		if [ -f 'authorized_keys' ]; then
+			mkdir -p $authorized_keys_dir
+			mv 'authorized_keys' $authorized_keys_dir
+			NEW_AUTHORIZED_KEYS='y'
+		else
+			_test_unlocking_host_available
+			mkdir -p $authorized_keys_dir
+			rsync "$UNLOCKING_USERHOST:.ssh/id_*.pub" $authorized_keys_dir || {
+				rm -rf $authorized_keys_dir
+				return 1
+			}
+			NEW_AUTHORIZED_KEYS='y'
+		fi
 	}
 }
 
@@ -681,9 +688,6 @@ _update_state_from_config_vars() {
 	[ "$cUSB_GADGET" != "$USB_GADGET" ]      && cfgvar_changed+=' USB_GADGET' target_configured='n'
 	[ "$cETH_DEV" != "$ETH_DEV" ]            && cfgvar_changed+=' ETH_DEV' target_configured='n'
 	[ "$cNETCFG_IFUPDOWN" != "$NETCFG_IFUPDOWN" ] && cfgvar_changed+=' NETCFG_IFUPDOWN' target_configured='n'
-	[ "$IP_ADDRESS" -a "$cUSE_LOCAL_AUTHORIZED_KEYS" != "$USE_LOCAL_AUTHORIZED_KEYS" ] && {
-		cfgvar_changed+=' USE_LOCAL_AUTHORIZED_KEYS' target_configured='n'
-	}
 
 	[ $card_partitioned == 'n' ] && {
 		bootpart_copied='n'
@@ -1056,6 +1060,7 @@ copy_etc_files_distro_specific() {
 		for f in $files; do
 			[ -e "$f" ] && _copy_to_target $f
 		done
+		:
 	else
 		warn 'Warning: host and target distros do not match, attempting to rewrite files:'
 		for f in $files; do
@@ -1454,7 +1459,6 @@ do
 			U)  UMOUNT_TARGET_ONLY='y' ;;
 			p)  PARTITION_ONLY='y' ;;
 			R)  FORCE_REFORMAT_ROOT='y' ;;
-			s)  USE_LOCAL_AUTHORIZED_KEYS='y' ;;
 			u)  APT_UPGRADE='y' ;;
 			d)  DEBUG='y' ;&
 			v)  VERBOSE='y' RSYNC_VERBOSITY='--verbose' ;;
