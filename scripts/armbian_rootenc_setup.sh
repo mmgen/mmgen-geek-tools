@@ -467,35 +467,35 @@ _apt_update() {
 	true
 }
 
+_print_installed_pkgs() {
+	for pkg in $@; do dpkg -l $pkg 2>/dev/null | grep -q ^ii && echo $pkg; done; true
+}
+
+_print_uninstalled_pkgs() {
+	for pkg in $@; do dpkg -l $pkg 2>/dev/null | grep -q ^ii || echo $pkg; done
+}
+
 _print_pkgs_to_install() {
-	local pkgs pkgs_ssh
+	local pkgs
 	case $1 in
 		'host')
+			pkgs='cryptsetup ed'
 			case "$host_distro" in
-				bullseye|jammy|bookworm|noble|trixie)
-					pkgs='cryptsetup ed' ;;
-				*)
-					pkgs='cryptsetup ed'
-					warn "Warning: unrecognized host distribution '$host_distro'" ;;
+				bullseye|jammy|bookworm|noble|trixie) true ;;
+				*) warn "Warning: unrecognized host distribution '$host_distro'" ;;
 			esac ;;
 		'target')
+			pkgs='cryptsetup-initramfs'
 			case "$target_distro" in
-				bullseye|jammy|bookworm|noble|trixie)
-					pkgs='cryptsetup-initramfs' pkgs_ssh='dropbear-initramfs' ;;
-				*)
-					pkgs='cryptsetup-initramfs' pkgs_ssh='dropbear-initramfs'
-					warn "Warning: unrecognized target distribution '$target_distro'" ;;
+				bullseye|jammy|bookworm|noble|trixie) true ;;
+				*) warn "Warning: unrecognized target distribution '$target_distro'" ;;
 			esac
-			[ "$NETCFG_IFUPDOWN" == 'y' ] && pkgs+=" ifupdown"
-			[ "$IP_ADDRESS" != 'none' ] && pkgs+=" $pkgs_ssh" ;;
 	esac
-	for i in $pkgs; do
-		dpkg -l $i 2>/dev/null | grep -q ^ii || echo $i
-	done
+	echo $pkgs
 }
 
 apt_install_host_pkgs() {
-	local pkgs=$(_print_pkgs_to_install 'host')
+	local pkgs=$(_print_uninstalled_pkgs $(_print_pkgs_to_install 'host'))
 	[ "$pkgs" ] && {
 		_apt_update
 		apt --yes install $pkgs
@@ -1286,28 +1286,36 @@ exit 0'
 
 # begin chroot functions:
 
-_pkg_remove() {
-	dpkg -s $1 2>/dev/null | grep ^Status | grep -q installed && apt-get --yes purge $1 || :
-}
-
 apt_remove_target_pkgs() {
-	[ "$IP_ADDRESS" == 'none' ] && _pkg_remove 'dropbear-initramfs'
-	_pkg_remove 'bash-completion'
-	_pkg_remove 'command-not-found'
+	local pkgs_to_remove=('bash-completion' 'command-not-found')
+	[ "$IP_ADDRESS" == 'none' ] && pkgs_to_remove+=('dropbear-initramfs')
+	if [ "$NETCFG_IFUPDOWN" == 'y' ]; then
+		pkgs_to_remove+=('ifupdown')
+	fi
+	local installed_to_remove=$(_print_installed_pkgs ${pkgs_to_remove[@]})
+	echo target packages to remove: $installed_to_remove
+	_show_output
+	[ "$installed_to_remove" ] && apt-get --yes purge $installed_to_remove
+	_hide_output
 	true
 }
 
 apt_install_target_pkgs() {
-	local pkgs=$(_print_pkgs_to_install 'target')
-	if [ "$pkgs" ]; then
-		echo "target packages to install: $pkgs"
+	local pkgs_to_install=($(_print_pkgs_to_install 'target'))
+	[ "$IP_ADDRESS" == 'none' ] || pkgs_to_install+=('dropbear-initramfs')
+	if [ "$NETCFG_IFUPDOWN" == 'y' ]; then
+		pkgs_to_install+=('ifupdown')
+	fi
+	local uninstalled_to_install=$(_print_uninstalled_pkgs ${pkgs_to_install[@]})
+	if [ "$uninstalled_to_install" ]; then
+		echo target packages to install: $uninstalled_to_install
 		local ls1 ls2
 		_show_output
 		ls1=$(ls -l /boot/initrd.img-*)
 		dpkg --configure --pending --force-confdef
 		_apt_update
 		echo 'force-confdef' > /root/.dpkg.cfg
-		apt --yes install $pkgs
+		apt --yes install $uninstalled_to_install
 		rm /root/.dpkg.cfg
 		apt --yes autoremove
 		ls2=$(ls -l /boot/initrd.img-*)
