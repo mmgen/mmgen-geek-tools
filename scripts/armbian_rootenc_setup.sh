@@ -475,6 +475,10 @@ _print_uninstalled_pkgs() {
 	for pkg in $@; do dpkg -l $pkg 2>/dev/null | grep -q ^ii || echo $pkg; done
 }
 
+_print_installed_pkgs_img() {
+	for pkg in $@; do chroot $SRC_ROOT dpkg -l $pkg 2>/dev/null | grep -q ^ii && echo $pkg; done; true
+}
+
 _print_pkgs_to_install() {
 	local pkgs
 	case $1 in
@@ -1290,6 +1294,8 @@ apt_remove_target_pkgs() {
 	local pkgs_to_remove=('bash-completion' 'command-not-found')
 	[ "$IP_ADDRESS" == 'none' ] && pkgs_to_remove+=('dropbear-initramfs')
 	if [ "$NETCFG_IFUPDOWN" == 'y' ]; then
+		pkgs_to_remove+=($netplan_pkgs)
+	else
 		pkgs_to_remove+=('ifupdown')
 	fi
 	local installed_to_remove=$(_print_installed_pkgs ${pkgs_to_remove[@]})
@@ -1305,6 +1311,8 @@ apt_install_target_pkgs() {
 	[ "$IP_ADDRESS" == 'none' ] || pkgs_to_install+=('dropbear-initramfs')
 	if [ "$NETCFG_IFUPDOWN" == 'y' ]; then
 		pkgs_to_install+=('ifupdown')
+	else
+		pkgs_to_install+=($netplan_pkgs)
 	fi
 	local uninstalled_to_install=$(_print_uninstalled_pkgs ${pkgs_to_install[@]})
 	if [ "$uninstalled_to_install" ]; then
@@ -1418,6 +1426,8 @@ configure_target() {
 	_show_output # this must be done before entering chroot
 	/bin/cp $0 $TARGET_ROOT
 
+	netplan_pkgs="$(_print_installed_pkgs_img $netplan_pkg_list)"
+
 	export \
 		'ROOTFS_NAME' \
 		'IP_ADDRESS' \
@@ -1426,7 +1436,8 @@ configure_target() {
 		'ROOTENC_PAUSE' \
 		'ROOTENC_IGNORE_APT_ERRORS' \
 		'APT_UPGRADE' \
-		'eth_dev'
+		'eth_dev' \
+		'netplan_pkgs'
 
 	chroot $TARGET_ROOT "./$PROGNAME" $ORIG_OPTS 'in_target'
 
@@ -1508,6 +1519,7 @@ shift
 
 authorized_keys_dir='authorized_keys.d'
 authorized_keys_file='authorized_keys'
+netplan_pkg_list='netplan.io python3-netplan netplan-generator libnetplan1'
 
 _set_env_vars $@
 
