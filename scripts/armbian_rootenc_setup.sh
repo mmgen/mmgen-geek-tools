@@ -1248,15 +1248,16 @@ ifupdown_config_usb0() {
 	bu_file="$file.rootenc.orig"
 	text="\nauto usb0\niface usb0 inet static\n\taddress $IP_ADDRESS\n\tnetmask $NETMASK"
 	if [ -e $file ]; then
+		netman_status="$(systemctl is-enabled 'network-manager' || true)"
 		if [ "$USB_GADGET" -a "$IP_ADDRESS" != 'dhcp' ]; then
 			grep -q '^auto usb0' $file || {
 				/bin/cp $file $bu_file
 				echo -e "$text" >> $file
 			}
-			systemctl mask network-manager
+			[ $netman_status == 'not-found' ] || systemctl mask network-manager
 		else
 			[ -e $bu_file ] && /bin/mv $bu_file $file
-			systemctl unmask network-manager
+			[ $netman_status == 'not-found' ] || systemctl unmask network-manager
 		fi
 		_display_file $file
 	elif [ "$USB_GADGET" ]; then
@@ -1322,19 +1323,24 @@ ifupdown_config_eth0() {
 	mkdir -p $dir
 	file="$dir/$eth_dev"
 	rm -rf $file
+	networking_status="$(systemctl is-enabled 'networking' || true)"
 	if [ "$NETCFG_IFUPDOWN" == 'y' ]; then
 		if [ "$IP_ADDRESS" == 'dhcp' ]; then
 			text="auto $eth_dev\niface $eth_dev inet dhcp"
 		else
 			text="auto $eth_dev\niface $eth_dev inet static\n\taddress $IP_ADDRESS\n\tnetmask $NETMASK"
 		fi
-		systemctl -q is-enabled 'networking' || { systemctl unmask 'networking'; systemctl enable 'networking'; }
-		systemctl -q is-enabled 'networking' || die "fatal error: unable to enable networking service (ifupdown)"
+		if [ $networking_status != 'not-found' ]; then
+			systemctl -q is-enabled 'networking' || { systemctl unmask 'networking'; systemctl enable 'networking'; }
+			systemctl -q is-enabled 'networking' || die "fatal error: unable to enable networking service (ifupdown)"
+		fi
 		echo -e "$text" > $file
 		_display_file $file
 	else
-		systemctl -q is-enabled 'networking' && systemctl mask 'networking'
-		systemctl -q is-enabled 'networking' && die "fatal error: unable to mask networking service"
+		if [ $networking_status != 'not-found' ]; then
+			systemctl -q is-enabled 'networking' && systemctl mask 'networking'
+			systemctl -q is-enabled 'networking' && die "fatal error: unable to mask networking service"
+		fi
 		true
 	fi
 }
