@@ -1076,14 +1076,11 @@ copy_etc_files_distro_specific() {
 }
 
 _display_file() {
-	local name text reply
-	if [ "$2" ]; then
-		name="$1"
-		text="$2"
-	else
-		name=${1#$TARGET_ROOT}
-		text="$(cat $1)"
-	fi
+	_display_output "${1#$TARGET_ROOT}" "$(cat $1)"
+}
+
+_display_output() {
+	local name="$1" text="$2"
 	hl='────────────────────────────────────────'
 	hl="$hl$hl$hl"
 	hls=${hl:0:${#name}+1}
@@ -1364,18 +1361,18 @@ check_initramfs() {
 
 	chk=$(echo "$text" | grep 'cryptsetup')
 	count=$(echo "$chk" | wc -l)
-	_display_file "lsinitramfs /boot/initrd.img* | grep 'cryptsetup'" "$chk"
+	_display_output "lsinitramfs /boot/initrd.img* | grep 'cryptsetup'" "$chk"
 	[ "$count" -gt 5 ] || { echo "$text"; die 'Cryptsetup scripts missing in initramfs image'; }
 
 	[ "$IP_ADDRESS" == 'none' ] || {
 		chk=$(echo "$text" | grep 'dropbear')
 		count=$(echo "$chk" | wc -l)
-		_display_file "lsinitramfs /boot/initrd.img* | grep 'dropbear'" "$chk"
+		_display_output "lsinitramfs /boot/initrd.img* | grep 'dropbear'" "$chk"
 		[ "$count" -gt 5 ] || { echo "$text"; die 'Dropbear scripts missing in initramfs image'; }
 
 		chk=$(echo "$text" | grep 'authorized_keys')
 		count=$(echo "$chk" | wc -l)
-		_display_file "lsinitramfs /boot/initrd.img* | grep 'authorized_keys'" "$chk"
+		_display_output "lsinitramfs /boot/initrd.img* | grep 'authorized_keys'" "$chk"
 		[ "$count" -eq 1 ] || { echo "$text"; die 'authorized_keys missing in initramfs image'; }
 	}
 	set -e
