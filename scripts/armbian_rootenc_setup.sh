@@ -437,11 +437,10 @@ _test_sdcard_mounted() {
 }
 
 get_authorized_keys() {
-	authorized_keys_dir="authorized_keys.d"
 	[ -e $authorized_keys_dir ] || {
-		if [ -f 'authorized_keys' ]; then
+		if [ -f $authorized_keys_file ]; then
 			mkdir -p $authorized_keys_dir
-			mv 'authorized_keys' $authorized_keys_dir
+			mv $authorized_keys_file $authorized_keys_dir
 			NEW_AUTHORIZED_KEYS='y'
 		else
 			_test_unlocking_host_available
@@ -1183,9 +1182,9 @@ edit_initramfs_modules() {
 copy_authorized_keys() {
 	local dest="$TARGET_ROOT$dropbear_dir"
 	mkdir -p $dest
-	/bin/cat $authorized_keys_dir/* > "$dest/authorized_keys"
-	chmod 644 "$dest/authorized_keys"
-	_display_file "$dest/authorized_keys"
+	/bin/cat $authorized_keys_dir/* > "$dest/$authorized_keys_file"
+	chmod 644 "$dest/$authorized_keys_file"
+	_display_file "$dest/$authorized_keys_file"
 }
 
 create_fstab() {
@@ -1484,6 +1483,9 @@ ARG1=$1
 [ "$ARG1" ] || die 'You must supply a target device name'
 
 shift
+
+authorized_keys_dir='authorized_keys.d'
+authorized_keys_file='authorized_keys'
 
 _set_env_vars $@
 
