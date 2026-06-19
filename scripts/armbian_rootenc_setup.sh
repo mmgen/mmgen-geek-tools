@@ -528,6 +528,7 @@ remove_build_dir() {
 
 _get_device_maps() {
 	local dm_type=$1 varname="device_maps_$1" dm_name ls mp
+	local cmd_out="$(dmsetup ls)"
 	eval "$varname="
 	while read dm_name; do
 		[ "$dm_name" == 'No devices found' ] && break
@@ -543,7 +544,7 @@ _get_device_maps() {
 		elif [ -z "$ls" -a "$dm_type" == 'unmounted' ]; then
 			eval "$varname+='$dm_name '"
 		fi
-	done <<<$(dmsetup ls | cut -f 1)
+	done <<<$(echo "$cmd_out" | cut -f 1)
 	tmsg "$varname=[${!varname}]"
 }
 
@@ -1297,15 +1298,11 @@ apt_remove_target_pkgs() {
 
 apt_install_target_pkgs() {
 	local pkgs=$(_print_pkgs_to_install 'target')
-	[ "$pkgs" ] && {
+	if [ "$pkgs" ]; then
 		echo "target packages to install: $pkgs"
 		local ls1 ls2
 		_show_output
 		ls1=$(ls -l /boot/initrd.img-*)
-# DEBUG:
-#		dpkg-reconfigure $pkgs # doesn't work in chroot
-#		apt --yes purge $pkgs
-#		apt-get --yes --purge autoremove
 		dpkg --configure --pending --force-confdef
 		_apt_update
 		echo 'force-confdef' > /root/.dpkg.cfg
@@ -1315,7 +1312,7 @@ apt_install_target_pkgs() {
 		ls2=$(ls -l /boot/initrd.img-*)
 		[ "$ls1" != "$ls2" ] && initramfs_updated='y'
 		_hide_output
-	}
+	fi
 	true
 }
 
@@ -1359,18 +1356,18 @@ check_initramfs() {
 	text="$(lsinitramfs /boot/initrd.img-*)"
 	set +e
 
-	chk=$(echo "$text" | grep 'cryptsetup')
+	chk=$(echo "$text" | grep 'cryptsetup' || true)
 	count=$(echo "$chk" | wc -l)
 	_display_output "lsinitramfs /boot/initrd.img* | grep 'cryptsetup'" "$chk"
 	[ "$count" -gt 5 ] || { echo "$text"; die 'Cryptsetup scripts missing in initramfs image'; }
 
 	[ "$IP_ADDRESS" == 'none' ] || {
-		chk=$(echo "$text" | grep 'dropbear')
+		chk=$(echo "$text" | grep 'dropbear' || true)
 		count=$(echo "$chk" | wc -l)
 		_display_output "lsinitramfs /boot/initrd.img* | grep 'dropbear'" "$chk"
 		[ "$count" -gt 5 ] || { echo "$text"; die 'Dropbear scripts missing in initramfs image'; }
 
-		chk=$(echo "$text" | grep 'authorized_keys')
+		chk=$(echo "$text" | grep 'authorized_keys' || true)
 		count=$(echo "$chk" | wc -l)
 		_display_output "lsinitramfs /boot/initrd.img* | grep 'authorized_keys'" "$chk"
 		[ "$count" -eq 1 ] || { echo "$text"; die 'authorized_keys missing in initramfs image'; }
@@ -1406,7 +1403,16 @@ configure_target() {
 
 	_show_output # this must be done before entering chroot
 	/bin/cp $0 $TARGET_ROOT
-	export 'ROOTFS_NAME' 'IP_ADDRESS' 'target_distro' 'ROOTENC_TESTING' 'ROOTENC_PAUSE' 'ROOTENC_IGNORE_APT_ERRORS' 'APT_UPGRADE' 'eth_dev'
+
+	export \
+		'ROOTFS_NAME' \
+		'IP_ADDRESS' \
+		'target_distro' \
+		'ROOTENC_TESTING' \
+		'ROOTENC_PAUSE' \
+		'ROOTENC_IGNORE_APT_ERRORS' \
+		'APT_UPGRADE' \
+		'eth_dev'
 
 	chroot $TARGET_ROOT "./$PROGNAME" $ORIG_OPTS 'in_target'
 
