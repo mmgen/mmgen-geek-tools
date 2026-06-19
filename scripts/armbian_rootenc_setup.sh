@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 
 PATH="$PATH:/usr/sbin:/sbin"
-RED="\e[31;1m" GREEN="\e[32;1m" YELLOW="\e[33;1m" BLUE="\e[34;1m" PURPLE="\e[35;1m" RESET="\e[0m"
+RED="\e[31;1m" GREEN="\e[32;1m" YELLOW="\e[33;1m" BLUE="\e[34;1m" PURPLE="\e[35;1m" CYAN="\e[36;1m"
+RESET="\e[0m"
 PROGNAME=$(basename $0)
 TITLE='Armbian Encrypted Root Filesystem Setup'
 CONFIG_VARS='
@@ -144,6 +145,7 @@ warn_nonl() { echo -ne "$YELLOW$1$RESET" >&$stdout_dup; no_fmsg=1; }
 rmsg()      { echo -e "$RED$1$RESET" >&$stdout_dup; no_fmsg=1; }
 gmsg()      { echo -e "$GREEN$1$RESET" >&$stdout_dup; no_fmsg=1; }
 pu_msg()    { echo -e "$PURPLE$1$RESET" >&$stdout_dup; no_fmsg=1; }
+cy_msg()    { echo -e "$CYAN$1$RESET" >&$stdout_dup; no_fmsg=1; }
 
 do_partprobe() {
 	if [ "$VERBOSE" ]; then
@@ -383,9 +385,12 @@ _get_user_vars() {
 		'^[A-Za-z0-9_ ]{1,10}$' \
 		"Temporary disk password must contain no more than 10 characters in the set 'A-Za-z0-9_ '"
 
-	if [ "$IP_ADDRESS" == 'none' ]; then
-		UNLOCKING_USERHOST=
-	else
+	if [ -e $authorized_keys_dir ]; then
+		warn_nonl "  Authorizing unlocking machine using SSH keys from file(s) "
+		cy_msg "$(cd $authorized_keys_dir; echo *)"
+	elif [ -f $authorized_keys_file ]; then
+		warn "  Authorizing unlocking machine using SSH key from ‘authorized_keys’"
+	elif [ "$IP_ADDRESS" != 'none' ]; then
 		_get_user_var 'UNLOCKING_USERHOST' 'USER@HOST' '' \
 			"Enter the user@host of the machine you'll be unlocking from:" \
 			'\S+@\S+' \
