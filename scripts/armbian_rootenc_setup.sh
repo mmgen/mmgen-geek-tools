@@ -468,7 +468,7 @@ _print_pkgs_to_install() {
 	case $1 in
 		'host')
 			case "$host_distro" in
-				bionic|buster|focal|bullseye|jammy|bookworm|noble|trixie)
+				bullseye|jammy|bookworm|noble|trixie)
 					pkgs='cryptsetup ed' ;;
 				*)
 					pkgs='cryptsetup ed'
@@ -476,10 +476,8 @@ _print_pkgs_to_install() {
 			esac ;;
 		'target')
 			case "$target_distro" in
-				buster|focal|bullseye|jammy|bookworm|noble|trixie)
+				bullseye|jammy|bookworm|noble|trixie)
 					pkgs='cryptsetup-initramfs' pkgs_ssh='dropbear-initramfs' ;;
-				bionic)
-					pkgs='cryptsetup' pkgs_ssh='dropbear-initramfs' ;;
 				*)
 					pkgs='cryptsetup-initramfs' pkgs_ssh='dropbear-initramfs'
 					warn "Warning: unrecognized target distribution '$target_distro'" ;;
@@ -1011,10 +1009,6 @@ _set_target_vars() {
 	local dfl_eth_dev
 
 	case $target_distro in
-		bionic|buster|focal)
-			dfl_eth_dev='eth0'
-			dropbear_dir='/etc/dropbear-initramfs'
-			dropbear_conf='config' ;;
 		bullseye|jammy)
 			dfl_eth_dev='eth0'
 			dropbear_dir='/etc/dropbear/initramfs'
@@ -1496,9 +1490,6 @@ _set_env_vars $@
 if [ "$ARG1" == 'in_target' ]; then
 	SCRIPT_DESC='Target script'
 	_hide_output
-	[ "$target_distro" == 'bionic' ] && {
-		echo 'export CRYPTSETUP=y' > '/etc/initramfs-tools/conf.d/cryptsetup'
-	}
 	apt_remove_target_pkgs
 	apt_install_target_pkgs
 	ifupdown_config_eth0
