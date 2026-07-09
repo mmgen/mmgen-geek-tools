@@ -255,13 +255,15 @@ check_sdcard_name_and_params() {
 	non_removable=$([ $removable -ne 0 ] || echo 'Device is non-removable')
 	SD_INFO="$(lsblk --noheadings --nodeps --list --output=VENDOR,MODEL,SIZE $dev 2>/dev/null)"
 	SD_INFO=${SD_INFO//  / }
-	if [ "$oversize" -o "$non_removable" ]; then
-		warn "  $dev ($SD_INFO) doesn’t appear to be an SD card"
-		warn "  for the following reasons:"
-		if [ "$non_removable" ]; then warn "      $non_removable"; fi
-		if [ "$oversize" ]; then warn "      $oversize"; fi
-		_user_confirm '  Are you sure this is the device you want to install on?' 'no'
-	fi
+	[ $MOUNT_TARGET_ONLY ] || {
+		if [ "$oversize" -o "$non_removable" ]; then
+			warn "  $dev ($SD_INFO) doesn’t appear to be an SD card"
+			warn "  for the following reasons:"
+			if [ "$non_removable" ]; then warn "      $non_removable"; fi
+			if [ "$oversize" ]; then warn "      $oversize"; fi
+			_user_confirm '  Are you sure this is the device you want to install on?' 'no'
+		fi
+	}
 	SDCARD_DEVNAME=${dev:5}
 	[ "${SDCARD_DEVNAME%[0-9]}" == $SDCARD_DEVNAME ] || part_sep='p'
 	BOOT_DEVNAME=$SDCARD_DEVNAME${part_sep}1
@@ -385,17 +387,19 @@ _get_user_vars() {
 		'^[A-Za-z0-9_ ]{1,10}$' \
 		"Temporary disk password must contain no more than 10 characters in the set 'A-Za-z0-9_ '"
 
-	if [ -e $authorized_keys_dir ]; then
-		warn_nonl "  Authorizing unlocking machine using SSH keys from file(s) "
-		cy_msg "$(cd $authorized_keys_dir; echo *)"
-	elif [ -f $authorized_keys_file ]; then
-		warn "  Authorizing unlocking machine using SSH key from ‘authorized_keys’"
-	elif [ "$IP_ADDRESS" != 'none' ]; then
-		_get_user_var 'UNLOCKING_USERHOST' 'USER@HOST' '' \
-			"Enter the user@host of the machine you'll be unlocking from:" \
-			'\S+@\S+' \
-			'malformed USER@HOST'
-	fi
+	[ "$MOUNT_TARGET_ONLY" ] || {
+		if [ -e $authorized_keys_dir ]; then
+			warn_nonl "  Authorizing unlocking machine using SSH keys from file(s) "
+			pu_msg "$(cd $authorized_keys_dir; echo *)"
+		elif [ -f $authorized_keys_file ]; then
+			warn "  Authorizing unlocking machine using SSH key from ‘authorized_keys’"
+		elif [ "$IP_ADDRESS" != 'none' ]; then
+			_get_user_var 'UNLOCKING_USERHOST' 'USER@HOST' '' \
+				"Enter the user@host of the machine you'll be unlocking from:" \
+				'\S+@\S+' \
+				'malformed USER@HOST'
+		fi
+	}
 
 	_get_user_var 'SERIAL_CONSOLE' 'serial console unlocking' '' \
 		"Unlock the disk from the serial console.  WARNING: enabling this will
