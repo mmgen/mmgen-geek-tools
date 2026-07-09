@@ -44,7 +44,7 @@ USER_OPTS_INFO="
 	USB_GADGET                 -  enable disk unlocking via SSH over USB (g_ether)
 	ETH_DEV                    -  select the network device manually (default: auto)
 	VERBOSE                    -  produce verbose output
-	NETCFG_IFUPDOWN            -  force configuration of network interface using ifupdown
+	NETCFG_IFUPDOWN            -  configure network interface using ifupdown
 "
 RSYNC_VERBOSITY='--info=progress2'
 
@@ -56,8 +56,8 @@ print_help() {
              '-d'  Produce tons of debugging output
              '-f'  Force reconfiguration of target system
              '-F'  Force a complete rebuild of target system
-             '-I'  Force configuration of target system network interface using
-                   ifupdown (/etc/network/interfaces)
+             '-I'  Configure target system network interface using ifupdown
+                   (/etc/network/interfaces).  Recommended for static IP setups
              '-m'  Add all currently loaded modules to the initramfs (may help
                    fix blank screen on bootup issues)
              '-o'  Add specified modules to the initramfs (comma-separated list)
@@ -198,7 +198,7 @@ _do_header() {
 		EOF
 	else
 		echo -n '                  '
-		echo $TITLE
+		pu_msg "$TITLE"
 		echo
 	fi
 	echo "                      For detailed usage information,"
@@ -507,7 +507,7 @@ apt_install_host_pkgs() {
 	true
 }
 
-create_build_dir() {
+create_build_tree() {
 	mkdir -p $BUILD_DIR
 	mkdir -p $SRC_ROOT
 	mkdir -p $BOOT_ROOT
@@ -522,7 +522,7 @@ umount_target() {
 	done
 }
 
-remove_build_dir() {
+remove_build_tree() {
 	[ -d $TARGET_ROOT ] && rmdir $TARGET_ROOT
 	[ -d $BOOT_ROOT ] && rmdir $BOOT_ROOT
 	[ -d $SRC_ROOT ] && rmdir $SRC_ROOT
@@ -532,6 +532,7 @@ remove_build_dir() {
 
 _get_device_maps() {
 	local dm_type=$1 varname="device_maps_$1" dm_name ls mp
+	dmsetup ls >/dev/null # fails with msg to stderr if no dm support in kernel
 	local cmd_out="$(dmsetup ls)"
 	eval "$varname="
 	while read dm_name; do
@@ -563,13 +564,13 @@ _close_device_maps() {
 }
 
 _preclean() {
-	close_loopmount
+	close_loopmounts
 	_get_device_maps 'unmounted'
 	_close_device_maps 'unmounted'
 	_get_device_maps 'mounted_on_target'
 	umount_target
 	_close_device_maps 'mounted_on_target'
-	remove_build_dir
+	remove_build_tree
 }
 
 _print_success_msg() {
@@ -577,7 +578,7 @@ _print_success_msg() {
 	imsg ""
 	imsg "  You may now shut down your board, switch removable media if applicable,"
 	imsg "  and restart."
-	if [ "$IP_ADDRESS" != "none" ]; then
+	if [ "$IP_ADDRESS" != 'none' ]; then
 		imsg ""
 		imsg "  To unlock the disk on the target machine, execute the following from the"
 		imsg "  unlocking host:"
@@ -589,12 +590,12 @@ _print_success_msg() {
 _clean() {
 	pu_msg "Cleaning up, please wait..."
 	_show_output
-	close_loopmount
+	close_loopmounts
 	_get_device_maps 'mounted_on_target'
 	umount_target
 	update_config_vars_file
 	_close_device_maps 'mounted_on_target'
-	remove_build_dir
+	remove_build_tree
 	[ "$build_success" ] && _print_success_msg
 	true
 }
@@ -622,9 +623,11 @@ get_partition_info() {
 			;;
 		*) die "$partition_table_type: unrecognized partition table type!" ;;
 	esac
+
 	[ $((start_sector % 8)) -eq 0 ] || die "start sector: $start_sector: first partition misaligned!"
 	boot_partition_sectors=819200 # 400MB
-	pu_msg "Image partition table type: ${partition_table_type^^}"
+
+	gmsg "Partition table: $PURPLE${partition_table_type^^}$RESET"
 }
 
 _confirm_user_vars() {
@@ -644,7 +647,7 @@ _confirm_user_vars() {
 	_user_confirm '  Are these settings correct?' 'yes'
 }
 
-setup_loopmount() {
+setup_loopmounts() {
 	LOOP_DEV=$(losetup -f)
 	losetup -P $LOOP_DEV $ARMBIAN_IMAGE
 	mount ${LOOP_DEV}p1 $SRC_ROOT
@@ -655,7 +658,7 @@ _umount_with_check() {
 }
 
 update_config_vars_file() {
-	mount "/dev/$BOOT_DEVNAME" $BOOT_ROOT
+	mount /dev/$BOOT_DEVNAME $BOOT_ROOT
 	_print_config_vars $CONFIG_VARS_FILE
 	umount $BOOT_ROOT
 }
@@ -783,7 +786,7 @@ check_install_state() {
 	fi
 }
 
-close_loopmount() {
+close_loopmounts() {
 	while mountpoint -q $SRC_ROOT; do
 		umount $SRC_ROOT
 	done
@@ -873,11 +876,11 @@ create_partitions() {
 
 	do_partprobe
 
-	[ "$VERBOSE" ] && {
+	if [ "$VERBOSE" ]; then
 		pu_msg 'Done partitioning:'
-		fdisk --list "/dev/$SDCARD_DEVNAME"
+		fdisk --list-detail "/dev/$SDCARD_DEVNAME"
 		imsg ""
-	}
+	fi
 
 	bname="$(lsblk --noheadings --list --output=NAME /dev/$BOOT_DEVNAME)"
 	[ "$bname" == $BOOT_DEVNAME ] || die 'Partitioning failed!'
@@ -1081,16 +1084,16 @@ copy_etc_files_distro_specific() {
 }
 
 _display_file() {
-	_display_output "${1#$TARGET_ROOT}" "$(cat $1)"
+	_display_output "${1#$TARGET_ROOT} ($(stat --format='%U:%G %a' $1))" "$(cat $1)"
 }
 
 _display_output() {
 	local name="$1" text="$2"
 	hl='────────────────────────────────────────'
 	hl="$hl$hl$hl"
-	hls=${hl:0:${#name}+1}
+	hls=${hl:0:${#name}}
 	echo "┌─$hls─┐"
-	echo "│ $name: │"
+	echo "│ $name │"
 	echo "├─$hls─┘"
 	echo "$text" | sed 's/^/│ /'
 }
@@ -1118,7 +1121,7 @@ bootlogo=false"
 }
 
 edit_extlinux_conf() {
-	local file=$TARGET_ROOT/$1 text console_arg
+	local file=$TARGET_ROOT/$1
 	/bin/cp $SRC_ROOT/$1 $TARGET_ROOT/$1
 
 	case $SERIAL_CONSOLE in
@@ -1330,7 +1333,6 @@ apt_install_target_pkgs() {
 		[ "$ls1" != "$ls2" ] && initramfs_updated='y'
 		_hide_output
 	fi
-	true
 }
 
 ifupdown_config_eth0() {
@@ -1340,6 +1342,7 @@ ifupdown_config_eth0() {
 	file="$dir/$eth_dev"
 	rm -rf $file
 	networking_status="$(systemctl is-enabled 'networking' || true)"
+	[ "$networking_status" ] || networking_status='not-found'
 	if [ "$NETCFG_IFUPDOWN" == 'y' ]; then
 		if [ "$IP_ADDRESS" == 'dhcp' ]; then
 			text="auto $eth_dev\niface $eth_dev inet dhcp"
@@ -1460,7 +1463,7 @@ _set_env_vars() {
 }
 
 _mount_target_and_exit() {
-	setup_loopmount
+	setup_loopmounts
 	mount_target
 	_set_target_vars
 	rmdir $BOOT_ROOT
@@ -1545,10 +1548,13 @@ else
 	apt_install_host_pkgs # _preclean requires cryptsetup
 	_preclean
 
-	[ "$UMOUNT_TARGET_ONLY" ] && exit
+	[ "$UMOUNT_TARGET_ONLY" ] && {
+		warn 'Unmounting source and target and exiting at user request'
+		exit
+	}
 
 	check_sdcard_name_and_params $ARG1
-	create_build_dir
+	create_build_tree
 
 	[ "$MOUNT_TARGET_ONLY" ] && warn 'Mounting source and target and exiting at user request'
 
@@ -1564,13 +1570,13 @@ else
 
 	[ "$NO_CLEANUP" ] || trap '_clean' EXIT
 
-	setup_loopmount
+	setup_loopmounts
 	_debug_pause
 
 	check_install_state
 	_hide_output
 
-	[ "$card_partitioned" == 'n' ]       && _do_partition
+	[ "$card_partitioned" == 'n' ] && _do_partition
 	_debug_pause
 
 	[ "$bootpart_copied" == 'n' ]        && copy_system_boot
