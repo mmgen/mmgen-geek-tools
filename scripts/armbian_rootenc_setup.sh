@@ -1169,15 +1169,17 @@ edit_extlinux_conf() {
 edit_initramfs_conf() {
 	local file="$TARGET_ROOT/etc/initramfs-tools/initramfs.conf" dev=$eth_dev
 	[ "$USB_GADGET" ] && dev='usb0'
-	ed $file <<-'EOF'
-		g/^\s*IP=/s/^/# /
+	ed --loose-exit-status $file <<-'EOF'
+		g/^\s*IP=/d
 		g/^\s*DEVICE=/d
+		g/^\s*MODULES=list/d
 		wq
 	EOF
+	[ "$ADD_ALL_MODS" ] && echo 'MODULES=list' >> $file
+	[ "$IP_ADDRESS" == 'none' ] || echo "DEVICE=$dev" >> $file
 	[ "$IP_ADDRESS" == 'dhcp' -o "$IP_ADDRESS" == 'none' ] || {
 		echo "IP=$IP_ADDRESS:::$NETMASK::$dev:off" >> $file
 	}
-	[ "$IP_ADDRESS" == 'none' ] || echo "DEVICE=$dev" >> $file
 	_display_file $file
 }
 
