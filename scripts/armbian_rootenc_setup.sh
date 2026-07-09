@@ -242,6 +242,9 @@ _set_host_vars() {
 	CONFIG_VARS_FILE="$BOOT_ROOT/.rootenc_config_vars"
 	host_distro=$(lsb_release --short --codename)
 	host_kernel=$(ls '/boot' | egrep '^vmlinu[xz]') # allow 'vmlinux' or 'vmlinuz'
+	target_mounts=($BOOT_ROOT $TARGET_ROOT)
+	build_subdirs=($SRC_ROOT $BOOT_ROOT $TARGET_ROOT)
+	src_subdirs=($SRC_ROOT)
 }
 
 check_sdcard_name_and_params() {
@@ -521,13 +524,13 @@ apt_install_host_pkgs() {
 
 create_build_tree() {
 	mkdir -p $BUILD_DIR
-	mkdir -p $SRC_ROOT
-	mkdir -p $BOOT_ROOT
-	mkdir -p $TARGET_ROOT
+	for dir in ${build_subdirs[@]}; do
+		mkdir -p $dir
+	done
 }
 
 umount_target() {
-	for i in $BOOT_ROOT $TARGET_ROOT; do
+	for i in ${target_mounts[@]}; do
 		while mountpoint -q $i; do
 			umount -Rl $i
 		done
@@ -535,9 +538,9 @@ umount_target() {
 }
 
 remove_build_tree() {
-	[ -d $TARGET_ROOT ] && rmdir $TARGET_ROOT
-	[ -d $BOOT_ROOT ] && rmdir $BOOT_ROOT
-	[ -d $SRC_ROOT ] && rmdir $SRC_ROOT
+	for dir in ${build_subdirs[@]}; do
+		[ -d $dir ] && rmdir $dir
+	done
 	[ -d $BUILD_DIR ] && rmdir $BUILD_DIR
 	true
 }
@@ -813,8 +816,10 @@ _close_loop() {
 }
 
 close_loopmounts() {
-	while mountpoint -q $SRC_ROOT; do
-		umount $SRC_ROOT
+	for dir in ${src_subdirs[@]}; do
+		while mountpoint -q $dir; do
+			umount $dir
+		done
 	done
 	_close_loop
 }
