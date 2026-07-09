@@ -874,6 +874,26 @@ _print_config_vars() {
 	if [ "$outfile" ]; then echo "$data" > $outfile; else echo "$data"; fi
 }
 
+_create_fdisk_cmds() {
+	local boot_end=$((start_sector + boot_partition_sectors - 1))
+	local root_start=$((boot_end + 1))
+	case $partition_table_type in
+		'gpt')
+			cmds="g\n"
+			cmds+="n\n1\n$start_sector\n$boot_end\n"
+			cmds+="t\n1\n$partition_type_uuid\n"
+			cmds+="n\n2\n$root_start\n\n"
+			cmds+="t\n2\n$partition_type_uuid\n"
+			;;
+		'dos')
+			cmds="o\n"
+			cmds+="n\np\n1\n$start_sector\n$boot_end\n"
+			cmds+="n\np\n2\n$root_start\n\n"
+			;;
+	esac
+	echo "$cmds"
+}
+
 _create_boot_fs() {
 	local fstype=$(lsblk --noheadings --list --output=FSTYPE "/dev/$BOOT_DEVNAME")
 	[ "$fstype" == 'ext4' -a "$ROOTENC_REUSE_FS" ] || {
@@ -883,23 +903,15 @@ _create_boot_fs() {
 }
 
 create_partitions() {
-	local p1_end p2_start cmds1 cmds2 bname rname fstype
-	p1_end=$((start_sector + boot_partition_sectors - 1))
-	p2_start=$((p1_end + 1))
+	local fdisk_cmds bname rname
 
-	case $partition_table_type in
-		'gpt')
-			cmds1="g\nn\n1\n$start_sector\n$p1_end\nn\n2\n$p2_start\n\n"
-			cmds2="t\n1\n$partition_type_uuid\nt\n2\n$partition_type_uuid\n"
-			;;
-		'dos')
-			cmds1="o\nn\np\n1\n$start_sector\n$p1_end\nn\np\n2\n$p2_start\n\n"
-			cmds2=""
-			;;
-	esac
+	# echo "$part_info" # DEBUG
+	fdisk_cmds="$(_create_fdisk_cmds)"
+
+	_display_output 'fdisk commands' "$(echo -e $fdisk_cmds)"
 
 	set +e; trap - ERR # fdisk exits with error if partition table cannot be re-read
-	echo -e "${cmds1}${cmds2}w\n" | fdisk "/dev/$SDCARD_DEVNAME"
+	echo -e "${fdisk_cmds}w\n" | fdisk "/dev/$SDCARD_DEVNAME"
 	set -e; trap '_error_handler' ERR
 
 	do_partprobe
