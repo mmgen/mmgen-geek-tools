@@ -806,13 +806,17 @@ check_install_state() {
 	fi
 }
 
+_close_loop() {
+	for i in $(losetup --noheadings --raw --list -j $ARMBIAN_IMAGE | awk '{print $1}'); do
+		losetup -d $i
+	done
+}
+
 close_loopmounts() {
 	while mountpoint -q $SRC_ROOT; do
 		umount $SRC_ROOT
 	done
-	for i in $(losetup --noheadings --raw --list -j $ARMBIAN_IMAGE | awk '{print $1}'); do
-		losetup -d $i
-	done
+	_close_loop
 }
 
 _user_confirm() {
