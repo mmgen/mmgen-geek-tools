@@ -1013,8 +1013,7 @@ _copy_to_target() {
 }
 
 create_etc_crypttab() {
-	local root_uuid="$(lsblk --noheadings --list --nodeps --output=UUID /dev/$ROOT_DEVNAME)"
-	echo "$ROOTFS_NAME UUID=$root_uuid none initramfs,luks" > "$TARGET_ROOT/etc/crypttab"
+	echo "$ROOTFS_NAME UUID=$rootdev_uuid none initramfs,luks" > "$TARGET_ROOT/etc/crypttab"
 	_display_file "$TARGET_ROOT/etc/crypttab"
 }
 
@@ -1040,6 +1039,9 @@ _print_net_dev() {
 
 _set_target_vars() {
 
+	boot_uuid="$(lsblk --noheadings --list --nodeps --output=UUID /dev/$BOOT_DEVNAME)"
+	rootdev_uuid="$(lsblk --noheadings --list --nodeps --output=UUID /dev/$ROOT_DEVNAME)"
+	root_uuid="$(lsblk --noheadings --list --nodeps --output=UUID /dev/mapper/$ROOTFS_NAME)"
 	target_distro=$(chroot $TARGET_ROOT 'lsb_release' '--short' '--codename')
 	target_kernel=$(chroot $TARGET_ROOT 'ls' '/boot' | egrep '^vmlinu[xz]')
 	target_armbian_keyring_signed=
@@ -1234,9 +1236,8 @@ copy_authorized_keys() {
 }
 
 create_fstab() {
-	local boot_uuid="$(lsblk --noheadings --list --output=UUID /dev/$BOOT_DEVNAME)"
 	local file="$TARGET_ROOT/etc/fstab"
-	local text="/dev/mapper/$ROOTFS_NAME / ext4 defaults,noatime,nodiratime,commit=600,errors=remount-ro 0 1
+	local text="UUID=$root_uuid / ext4 defaults,noatime,nodiratime,commit=600,errors=remount-ro 0 1
 UUID=$boot_uuid /boot ext4 defaults,noatime,nodiratime,commit=600,errors=remount-ro 0 2
 tmpfs /tmp tmpfs defaults,nosuid 0 0"
 	rm -rf $file # existing file could have incorrect permissions
@@ -1486,6 +1487,9 @@ configure_target() {
 		'APT_UPGRADE' \
 		'eth_dev' \
 		'netplan_pkgs' \
+		'rootdev_uuid' \
+		'root_uuid' \
+		'boot_uuid' \
 		'dropbear_dir'
 
 	chroot $TARGET_ROOT "./$PROGNAME" $ORIG_OPTS 'in_target'
