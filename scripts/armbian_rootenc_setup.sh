@@ -874,6 +874,14 @@ _print_config_vars() {
 	if [ "$outfile" ]; then echo "$data" > $outfile; else echo "$data"; fi
 }
 
+_create_boot_fs() {
+	local fstype=$(lsblk --noheadings --list --output=FSTYPE "/dev/$BOOT_DEVNAME")
+	[ "$fstype" == 'ext4' -a "$ROOTENC_REUSE_FS" ] || {
+		mkfs.ext4 -F "/dev/$BOOT_DEVNAME"
+	}
+	do_partprobe
+}
+
 create_partitions() {
 	local p1_end p2_start cmds1 cmds2 bname rname fstype
 	p1_end=$((start_sector + boot_partition_sectors - 1))
@@ -909,9 +917,7 @@ create_partitions() {
 	[ "$rname" == $ROOT_DEVNAME ] || die 'Partitioning failed!'
 
 	# boot partition filesystem is required by call to _add_state_file(), so we must create it here
-	fstype=$(lsblk --noheadings --list --output=FSTYPE "/dev/$BOOT_DEVNAME")
-	[ "$fstype" == 'ext4' -a "$ROOTENC_REUSE_FS" ] || mkfs.ext4 -F "/dev/$BOOT_DEVNAME"
-	do_partprobe
+	_create_boot_fs
 
 	_add_state_file 'card_partitioned' 'mount'
 }
