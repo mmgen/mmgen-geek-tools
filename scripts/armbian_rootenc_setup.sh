@@ -47,6 +47,7 @@ USER_OPTS_INFO="
 	NETCFG_IFUPDOWN            -  configure network interface using ifupdown
 "
 RSYNC_VERBOSITY='--info=progress2'
+system_passwd='1234'
 
 print_help() {
 	echo "  ${PROGNAME^^}: Create an Armbian image with encrypted root filesystem
@@ -595,7 +596,15 @@ _print_success_msg() {
 		imsg "  unlocking host:"
 		imsg ""
 		imsg "      ssh -p 2222 root@${IP_ADDRESS/dhcp/TARGET_IP}"
+		imsg ""
+		imsg "  At the prompt, enter the disk password ‘$DISK_PASSWD’"
 	fi
+	imsg ""
+	imsg "  After the system boots, log in as root on the virtual terminal with password"
+	imsg_nonl "  ‘$system_passwd’"
+
+	[ "$IP_ADDRESS" != 'none' ] && imsg_nonl ", or via SSH without a password"
+	imsg ""
 }
 
 _clean() {
