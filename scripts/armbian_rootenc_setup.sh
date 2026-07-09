@@ -1322,10 +1322,16 @@ apt_remove_target_pkgs() {
 	fi
 	local installed_to_remove=$(_print_installed_pkgs ${pkgs_to_remove[@]})
 	echo target packages to remove: $installed_to_remove
-	_show_output
-	[ "$installed_to_remove" ] && apt-get --yes purge $installed_to_remove
-	_hide_output
-	true
+	if [ "$installed_to_remove" ]; then
+		local ls1 ls2
+		_show_output
+		ls1=$(ls -l /boot/initrd.img-*)
+		dpkg --configure --pending --force-confdef
+		apt-get --yes purge $installed_to_remove
+		ls2=$(ls -l /boot/initrd.img-*)
+		[ "$ls1" == "$ls2" ] && initramfs_needs_update='y'
+		_hide_output
+	fi
 }
 
 apt_install_target_pkgs() {
@@ -1349,7 +1355,7 @@ apt_install_target_pkgs() {
 		rm /root/.dpkg.cfg
 		apt --yes autoremove
 		ls2=$(ls -l /boot/initrd.img-*)
-		[ "$ls1" != "$ls2" ] && initramfs_updated='y'
+		[ "$ls1" == "$ls2" ] && initramfs_needs_update='y'
 		_hide_output
 	fi
 }
@@ -1554,10 +1560,11 @@ if [ "$ARG1" == 'in_target' ]; then
 	if [ "$IP_ADDRESS" != 'none' ]; then
 		copy_authorized_keys "$dropbear_dir/$authorized_keys_file" '/root/.ssh' 'root' 700 600
 	fi
+	initramfs_needs_update=
 	apt_remove_target_pkgs
 	apt_install_target_pkgs
 	ifupdown_config_eth0
-	[ "$initramfs_updated" ] || update_initramfs
+	[ "$initramfs_needs_update" ] && update_initramfs
 	gen_target_ssh_host_keys
 	check_initramfs
 else
