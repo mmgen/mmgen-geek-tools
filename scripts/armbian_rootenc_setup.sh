@@ -937,6 +937,25 @@ create_bootpart_label() {
 	_add_state_file 'bootpart_label_created' 'mount'
 }
 
+_do_copy_system() {
+	mount "/dev/mapper/$ROOTFS_NAME" $TARGET_ROOT
+
+	pu_msg "Copying system to encrypted root partition:"
+	_show_output
+	rsync $RSYNC_VERBOSITY \
+		--archive \
+		--exclude='boot' \
+		--exclude='var/cache/apt/archives' \
+		$SRC_ROOT/* $TARGET_ROOT
+	_hide_output
+	sync
+	(
+		cd $TARGET_ROOT
+		mkdir 'boot'
+	)
+	umount $TARGET_ROOT
+}
+
 copy_system_root() {
 	if [ "$FORCE_REFORMAT_ROOT" ] || ! cryptsetup isLuks "/dev/$ROOT_DEVNAME"; then
 		pu_msg "Formatting encrypted root partition:"
@@ -947,20 +966,7 @@ copy_system_root() {
 	local fstype=$(lsblk --noheadings --list --output=FSTYPE "/dev/mapper/$ROOTFS_NAME")
 	[ "$fstype" == 'ext4' -a "$ROOTENC_REUSE_FS" ] || mkfs.ext4 -F "/dev/mapper/$ROOTFS_NAME"
 
-	[ "$PARTITION_ONLY" ] || {
-		mount "/dev/mapper/$ROOTFS_NAME" $TARGET_ROOT
-
-		pu_msg "Copying system to encrypted root partition:"
-		_show_output
-		rsync $RSYNC_VERBOSITY --archive --exclude='boot' --exclude='var/cache/apt/archives' $SRC_ROOT/* $TARGET_ROOT
-		_hide_output
-		sync
-
-		mkdir -p "$TARGET_ROOT/boot"
-		touch "$TARGET_ROOT/root/.no_rootfs_resize"
-
-		umount $TARGET_ROOT
-	}
+	[ "$PARTITION_ONLY" ] || _do_copy_system
 
 	cryptsetup luksClose $ROOTFS_NAME
 	do_partprobe
