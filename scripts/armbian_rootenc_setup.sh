@@ -658,6 +658,16 @@ get_partition_info() {
 	gmsg "Partition table: $PURPLE${partition_table_type^^}$RESET"
 }
 
+setup_loop() {
+	LOOP_DEV=$(losetup -f)
+	losetup -P $LOOP_DEV $ARMBIAN_IMAGE
+	for i in $(seq 20); do
+		[ -e ${LOOP_DEV}p1 ] && break
+		sleep 0.5
+	done
+	[ -e ${LOOP_DEV}p1 ] || die "Timed out waiting for loop device ${LOOP_DEV}p1"
+}
+
 _confirm_user_vars() {
 	echo
 	echo "  Armbian image:                $ARMBIAN_IMAGE"
@@ -676,8 +686,7 @@ _confirm_user_vars() {
 }
 
 setup_loopmounts() {
-	LOOP_DEV=$(losetup -f)
-	losetup -P $LOOP_DEV $ARMBIAN_IMAGE
+	setup_loop
 	mount ${LOOP_DEV}p1 $SRC_ROOT
 }
 
@@ -1631,6 +1640,9 @@ else
 	[ "$ARMBIAN_IMAGE" ] || get_armbian_image
 
 	get_partition_info
+
+	[ "$NO_CLEANUP" ] || trap '_close_loop' EXIT
+	setup_loop
 
 	apt_install_host_pkgs # _preclean requires cryptsetup
 	_preclean
