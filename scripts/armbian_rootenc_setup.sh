@@ -899,7 +899,7 @@ create_partitions() {
 	rname="$(lsblk --noheadings --list --output=NAME /dev/$ROOT_DEVNAME)"
 	[ "$rname" == $ROOT_DEVNAME ] || die 'Partitioning failed!'
 
-	# filesystem is required by call to _add_state_file(), so we must create it here
+	# boot partition filesystem is required by call to _add_state_file(), so we must create it here
 	fstype=$(lsblk --noheadings --list --output=FSTYPE "/dev/$BOOT_DEVNAME")
 	[ "$fstype" == 'ext4' -a "$ROOTENC_REUSE_FS" ] || mkfs.ext4 -F "/dev/$BOOT_DEVNAME"
 	do_partprobe
@@ -1225,12 +1225,12 @@ copy_authorized_keys() {
 }
 
 create_fstab() {
-	local boot_uuid file text
-	boot_uuid="$(lsblk --noheadings --list --output=UUID /dev/$BOOT_DEVNAME)"
-	file="$TARGET_ROOT/etc/fstab"
-	text="/dev/mapper/$ROOTFS_NAME / ext4 defaults,noatime,nodiratime,commit=600,errors=remount-ro 0 1
+	local boot_uuid="$(lsblk --noheadings --list --output=UUID /dev/$BOOT_DEVNAME)"
+	local file="$TARGET_ROOT/etc/fstab"
+	local text="/dev/mapper/$ROOTFS_NAME / ext4 defaults,noatime,nodiratime,commit=600,errors=remount-ro 0 1
 UUID=$boot_uuid /boot ext4 defaults,noatime,nodiratime,commit=600,errors=remount-ro 0 2
 tmpfs /tmp tmpfs defaults,nosuid 0 0"
+	rm -rf $file # existing file could have incorrect permissions
 	echo "$text" > $file
 	_display_file $file
 }
@@ -1282,7 +1282,8 @@ ifupdown_config_usb0() {
 	bu_file="$file.rootenc.orig"
 	text="\nauto usb0\niface usb0 inet static\n\taddress $IP_ADDRESS\n\tnetmask $NETMASK"
 	if [ -e $file ]; then
-		netman_status="$(systemctl is-enabled 'network-manager' || true)"
+		netman_status="$(systemctl is-enabled 'network-manager' 2>/dev/null || true)"
+		[ "$netman_status" ] || netman_status='not-found'
 		if [ "$USB_GADGET" -a "$IP_ADDRESS" != 'dhcp' ]; then
 			grep -q '^auto usb0' $file || {
 				/bin/cp $file $bu_file
@@ -1573,8 +1574,9 @@ if [ "$ARG1" == 'in_target' ]; then
 	apt_install_target_pkgs
 	ifupdown_config_eth0
 	[ "$initramfs_needs_update" ] && update_initramfs
-	gen_target_ssh_host_keys
 	check_initramfs
+	gen_target_ssh_host_keys
+	touch '/root/.no_rootfs_resize'
 else
 	SCRIPT_DESC='Host script'
 	_check_eth_dev
