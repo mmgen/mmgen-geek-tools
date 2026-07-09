@@ -598,8 +598,7 @@ _clean() {
 	update_config_vars_file
 	_close_device_maps 'mounted_on_target'
 	remove_build_tree
-	[ "$build_success" ] && _print_success_msg
-	true
+	[ "$build_success" ] && _print_success_msg || true
 }
 
 _print_success_msg() {
@@ -761,14 +760,18 @@ _update_state_from_config_vars() {
 
 _add_state_file() {
 	local state=$1 cmd=$2
-	if [ "$cmd" == 'target' ]; then
-		touch "$TARGET_ROOT/boot/.rootenc_install_state/$state"
-	else
-		[ "$cmd" == 'mount' ] && mount "/dev/$BOOT_DEVNAME" $BOOT_ROOT
-		mkdir -p "$BOOT_ROOT/.rootenc_install_state"
-		touch "$BOOT_ROOT/.rootenc_install_state/$state"
-		[ "$cmd" == 'mount' ] && umount $BOOT_ROOT
-	fi
+	case $cmd in
+		'target')
+			touch "$TARGET_ROOT/$BOOT_DIRNAME/.rootenc_install_state/$state" ;;
+		'mount')
+			mount "/dev/$BOOT_DEVNAME" $BOOT_ROOT
+			mkdir -p "$BOOT_ROOT/.rootenc_install_state"
+			touch "$BOOT_ROOT/.rootenc_install_state/$state"
+			umount $BOOT_ROOT ;;
+		*)
+			mkdir -p "$BOOT_ROOT/.rootenc_install_state"
+			touch "$BOOT_ROOT/.rootenc_install_state/$state" ;;
+	esac
 	eval "$state='y'"
 	tmsg "added state file '$state'"
 }
@@ -1635,8 +1638,6 @@ else
 	SCRIPT_DESC='Host script'
 	_check_eth_dev
 	_do_header
-	_set_host_vars
-
 	[ "$ARMBIAN_IMAGE" ] || get_armbian_image
 
 	get_partition_info
@@ -1644,8 +1645,10 @@ else
 	[ "$NO_CLEANUP" ] || trap '_close_loop' EXIT
 	setup_loop
 
-	apt_install_host_pkgs # _preclean requires cryptsetup
-	_preclean
+	_set_host_vars
+
+	apt_install_host_pkgs # install cryptsetup, et al.
+	_preclean             # unmount tree, close dev mapper & loop; requires host vars, cryptsetup
 
 	[ "$UMOUNT_TARGET_ONLY" ] && {
 		warn 'Unmounting source and target and exiting at user request'
@@ -1653,6 +1656,8 @@ else
 	}
 
 	check_sdcard_name_and_params $ARG1
+
+	[ "$NO_CLEANUP" -o "$MOUNT_TARGET_ONLY" ] || trap 'remove_build_tree' EXIT
 	create_build_tree
 
 	[ "$MOUNT_TARGET_ONLY" ] && warn 'Mounting source and target and exiting at user request'
