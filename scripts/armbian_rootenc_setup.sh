@@ -245,7 +245,26 @@ _set_host_vars() {
 	target_mounts=($BOOT_ROOT $TARGET_ROOT)
 	build_subdirs=($SRC_ROOT $BOOT_ROOT $TARGET_ROOT)
 	src_subdirs=($SRC_ROOT)
-	boot_partition_sectors=819200 ;; # 400MB
+	case $image_type in
+		'armbian')
+			BOOT_DIRNAME='boot'
+			boot_partition_sectors=819200 ;; # 400MB
+		'radxa')
+			P1_SRC_ROOT="$BUILD_DIR/p1_src"
+			P2_SRC_ROOT="$BUILD_DIR/p2_src"
+			P1_TARGET_ROOT="$BUILD_DIR/p1_target"
+			P2_TARGET_ROOT="$BUILD_DIR/p2_target"
+			target_mounts+=($P1_TARGET_ROOT $P2_TARGET_ROOT)
+			STATES+='
+				p1_created
+				p2_created
+			'
+			build_subdirs+=($P1_SRC_ROOT $P2_SRC_ROOT $P1_TARGET_ROOT $P2_TARGET_ROOT)
+			src_subdirs+=($P1_SRC_ROOT $P2_SRC_ROOT)
+			BOOT_DIRNAME='bootpart'
+			boot_partition_sectors=1638400 # 800MB
+			ADD_ALL_MODS='y' ;;
+	esac
 }
 
 check_sdcard_name_and_params() {
@@ -278,8 +297,16 @@ check_sdcard_name_and_params() {
 	}
 	SDCARD_DEVNAME=${dev:5}
 	[ "${SDCARD_DEVNAME%[0-9]}" == $SDCARD_DEVNAME ] || part_sep='p'
-	BOOT_DEVNAME=$SDCARD_DEVNAME${part_sep}1
-	ROOT_DEVNAME=$SDCARD_DEVNAME${part_sep}2
+	case $image_type in
+		'armbian')
+			BOOT_DEVNAME=$SDCARD_DEVNAME${part_sep}1
+			ROOT_DEVNAME=$SDCARD_DEVNAME${part_sep}2 ;;
+		'radxa')
+			P1_DEVNAME=$SDCARD_DEVNAME${part_sep}1
+			P2_DEVNAME=$SDCARD_DEVNAME${part_sep}2
+			BOOT_DEVNAME=$SDCARD_DEVNAME${part_sep}3
+			ROOT_DEVNAME=$SDCARD_DEVNAME${part_sep}4 ;;
+	esac
 	[ "$SDCARD_DEVNAME" ] || die 'You must supply a device name for the SD card!'
 	pu_msg "Will write to target $dev ($SD_INFO)"
 }
@@ -373,11 +400,13 @@ _get_user_vars() {
 			'malformed netmask'
 	}
 
-	_get_user_var 'BOOTPART_LABEL' 'boot partition label' 'ARMBIAN_BOOT' \
-		"Enter a boot partition label for the target machine,
-		or hit ENTER for the default (%s): " \
-		'^[A-Za-z0-9_]{1,16}$' \
-		"Label must contain no more than 16 characters in the set 'A-Za-z0-9_'"
+	case $image_type in
+		'armbian') _get_user_var 'BOOTPART_LABEL' 'boot partition label' 'ARMBIAN_BOOT' \
+			"Enter a boot partition label for the target machine, or hit ENTER for the default (%s): " \
+			'^[A-Za-z0-9_]{1,16}$' \
+			"Label must contain no more than 16 characters in the set 'A-Za-z0-9_'" ;;
+		'radxa') BOOTPART_LABEL='rootfs' ;;
+	esac
 
 	_get_user_var 'ROOTFS_NAME' 'root filesystem device name' 'rootfs' \
 		"Enter a device name for the encrypted root filesystem,
@@ -500,6 +529,7 @@ _print_pkgs_to_install() {
 	case $1 in
 		'host')
 			pkgs='cryptsetup ed'
+			[ $image_type == 'radxa' ] && pkgs+=' dosfstools'
 			case "$host_distro" in
 				bullseye|jammy|bookworm|noble|trixie) true ;;
 				*) warn "Warning: unrecognized host distribution '$host_distro'" ;;
@@ -543,6 +573,7 @@ remove_build_tree() {
 		[ -d $dir ] && rmdir $dir
 	done
 	[ -d $BUILD_DIR ] && rmdir $BUILD_DIR
+	[ -d $tmpdir ] && rmdir $tmpdir
 	true
 }
 
@@ -595,7 +626,7 @@ _clean() {
 	close_loopmounts
 	_get_device_maps 'mounted_on_target'
 	umount_target
-	update_config_vars_file
+	[ -e /dev/$BOOT_DEVNAME ] && update_config_vars_file
 	_close_device_maps 'mounted_on_target'
 	remove_build_tree
 	[ "$build_success" ] && _print_success_msg || true
@@ -618,7 +649,7 @@ _print_success_msg() {
 	imsg ""
 	imsg "  After the system boots, log in as root on the virtual terminal with password"
 	imsg_nonl "  ‘$system_passwd’"
-
+	[ "$image_type" == 'radxa' ] && imsg_nonl ", or as user ‘radxa’ with password ‘radxa’"
 	[ "$IP_ADDRESS" != 'none' ] && imsg_nonl ", or via SSH without a password"
 	imsg ""
 }
@@ -658,6 +689,8 @@ get_partition_info() {
 }
 
 setup_loop() {
+	tmpdir='tmp'
+	mkdir -p $tmpdir
 	LOOP_DEV=$(losetup -f)
 	losetup -P $LOOP_DEV $ARMBIAN_IMAGE
 	for i in $(seq 20); do
@@ -665,6 +698,27 @@ setup_loop() {
 		sleep 0.5
 	done
 	[ -e ${LOOP_DEV}p1 ] || die "Timed out waiting for loop device ${LOOP_DEV}p1"
+}
+
+get_image_type() {
+	local num_partitions="$(echo "$part_info" | wc -l)"
+	declare -A local rinfo=('armbian' '/etc/armbian-release' 'radxa' '/etc/radxa_image_fingerprint')
+	declare -A local pinfo=('armbian' 1 'radxa' 3)
+	mount "${LOOP_DEV}p$num_partitions" $tmpdir
+	local key release_file
+	for key in ${!rinfo[@]}; do
+		release_file=${rinfo[$key]}
+		if [ -e "$tmp$release_file" ]; then
+			[ $num_partitions == ${pinfo[$key]} ] || {
+				die "$num_partitions: invalid number of partitions for ${key^} image"; }
+			[ "$(cat $tmp$release_file)" == "$(cat $release_file)" ] || {
+				warn "Host and image distributions do not match! You may experience problems"; }
+			image_type=$key
+			break
+		fi
+	done
+	[ "$image_type" ] || die "unrecognized disk image!"
+	gmsg "Image type: $PURPLE${image_type^^}$RESET"
 }
 
 _confirm_user_vars() {
@@ -686,7 +740,14 @@ _confirm_user_vars() {
 
 setup_loopmounts() {
 	setup_loop
-	mount ${LOOP_DEV}p1 $SRC_ROOT
+	case $image_type in
+		'armbian')
+			mount ${LOOP_DEV}p1 $SRC_ROOT ;;
+		'radxa')
+			mount ${LOOP_DEV}p1 $P1_SRC_ROOT
+			mount ${LOOP_DEV}p2 $P2_SRC_ROOT
+			mount ${LOOP_DEV}p3 $SRC_ROOT ;;
+	esac
 }
 
 _umount_with_check() {
@@ -736,6 +797,10 @@ _update_state_from_config_vars() {
 	[ "$cNETCFG_IFUPDOWN" != "$NETCFG_IFUPDOWN" ] && cfgvar_changed+=' NETCFG_IFUPDOWN' target_configured='n'
 
 	[ $card_partitioned == 'n' ] && {
+		[ $image_type == 'radxa' ] && {
+			p1_created='n'
+			p2_created='n'
+		}
 		bootpart_copied='n'
 		bootpart_label_created='n'
 		rootpart_copied='n'
@@ -827,6 +892,7 @@ check_install_state() {
 }
 
 _close_loop() {
+	mountpoint -q $tmpdir && umount $tmpdir
 	for i in $(losetup --noheadings --raw --list -j $ARMBIAN_IMAGE | awk '{print $1}'); do
 		losetup -d $i
 	done
@@ -900,7 +966,7 @@ _print_config_vars() {
 	if [ "$outfile" ]; then echo "$data" > $outfile; else echo "$data"; fi
 }
 
-_create_fdisk_cmds() {
+_create_fdisk_cmds_armbian() {
 	local boot_end=$((start_sector + boot_partition_sectors - 1))
 	local root_start=$((boot_end + 1))
 	case $partition_table_type in
@@ -920,6 +986,51 @@ _create_fdisk_cmds() {
 	echo "$cmds"
 }
 
+_create_fdisk_cmds_radxa() {
+		local cmds name start_sector end_sector sectors type_uuid uuid part_num
+		cmds="g\n" part_num=1
+
+		# create partitions 1, 2 (config, empty EFI)
+		while read type_uuid uuid start_sector end_sector sectors name; do
+			cmds+="n\n$part_num\n$start_sector\n$end_sector\n"
+			# [ $part_num != 1 ] && cmds+="t\n$part_num\n$type_uuid\n" # can´t set type on part 1
+			let part_num++
+			boot_start=$((end_sector + 1))
+		done <<<$(echo "$part_info" | head -n2)
+		boot_end=$((boot_start + boot_partition_sectors - 1))
+		root_start=$((boot_end + 1))
+
+		# create partition 3 (boot)
+		cmds+="n\n$part_num\n$boot_start\n$boot_end\n"
+
+		# create partition 4 (root)
+		let part_num++
+		cmds+="n\n$part_num\n$root_start\n\n"
+
+		# enter expert mode
+		cmds+="x\n"
+
+		# set disk GUID (optional)
+		# cmds+="i\n$disk_id\n"
+
+		# set names, partition UUIDs (optional)
+		part_num=1
+		while read type_uuid uuid start_sector end_sector sectors name; do
+			# cmds+="u\n$part_num\n$uuid\n"
+			cmds+="n\n$part_num\n$name\n"
+			let part_num++
+		done <<<$(echo "$part_info")
+
+		# set bootable flags for partitions 2, 3
+		cmds+="A\n2\n"
+		cmds+="A\n3\n"
+
+		# leave expert mode
+		cmds+="r\n"
+
+		echo "$cmds"
+}
+
 _create_boot_fs() {
 	local fstype=$(lsblk --noheadings --list --output=FSTYPE "/dev/$BOOT_DEVNAME")
 	[ "$fstype" == 'ext4' -a "$ROOTENC_REUSE_FS" ] || {
@@ -932,7 +1043,7 @@ create_partitions() {
 	local fdisk_cmds bname rname
 
 	# echo "$part_info" # DEBUG
-	fdisk_cmds="$(_create_fdisk_cmds)"
+	fdisk_cmds="$(eval "_create_fdisk_cmds_$image_type")"
 
 	_display_output 'fdisk commands' "$(echo -e $fdisk_cmds)"
 
@@ -969,6 +1080,27 @@ _do_partition() {
 	create_partitions
 }
 
+_create_radxa_partition() {
+	local devname=$1 loop_devname=$2 src_root=$3 target_root=$4 state_file=$5
+	local src_fstype=$(lsblk --noheadings --list --output=fstype $loop_devname)
+	local src_label=$(lsblk --noheadings --list --output=label $loop_devname)
+	local fstype=$(lsblk --noheadings --list --output=fstype $devname)
+	[ "$fstype" == $src_fstype -a "$ROOTENC_REUSE_FS" ] || mkfs.vfat -n "$src_label" $devname
+	do_partprobe
+	mount $devname $target_root
+	rsync $RSYNC_VERBOSITY --archive $src_root/ $target_root
+	ls -la $target_root
+	_add_state_file $state_file 'mount'
+}
+
+create_p1() {
+	_create_radxa_partition "/dev/$P1_DEVNAME" "${LOOP_DEV}p1" $P1_SRC_ROOT $P1_TARGET_ROOT 'p1_created'
+}
+
+create_p2() {
+	_create_radxa_partition "/dev/$P2_DEVNAME" "${LOOP_DEV}p2" $P2_SRC_ROOT $P2_TARGET_ROOT 'p2_created'
+}
+
 copy_system_boot() {
 	[ "$PARTITION_ONLY" ] && {
 		_add_state_file 'bootpart_copied' 'mount'
@@ -977,9 +1109,16 @@ copy_system_boot() {
 	mount "/dev/$BOOT_DEVNAME" $BOOT_ROOT
 	pu_msg "Copying files to boot partition:"
 	_show_output
-	rsync $RSYNC_VERBOSITY --archive $SRC_ROOT/boot/* $BOOT_ROOT
+	case $image_type in
+		'armbian')
+			rsync $RSYNC_VERBOSITY --archive $SRC_ROOT/boot/* $BOOT_ROOT
+			[ -e "$BOOT_ROOT/boot" ] || (cd $BOOT_ROOT && ln -s . 'boot') ;;
+		'radxa')
+			mkdir -p "$BOOT_ROOT/boot"
+			rsync $RSYNC_VERBOSITY --archive --relative $SRC_ROOT/./boot/ $BOOT_ROOT
+			rsync $RSYNC_VERBOSITY --archive --relative $SRC_ROOT/./usr/lib/linux-image-* $BOOT_ROOT ;;
+	esac
 	_hide_output
-	[ -e "$BOOT_ROOT/boot" ] || (cd $BOOT_ROOT && ln -s . 'boot')
 	_add_state_file 'bootpart_copied'
 	umount $BOOT_ROOT
 }
@@ -1004,7 +1143,12 @@ _do_copy_system() {
 	sync
 	(
 		cd $TARGET_ROOT
-		mkdir 'boot'
+		mkdir -p $BOOT_DIRNAME
+		if [ $image_type == 'radxa' ]; then
+			[ -d 'boot' ] && rmdir 'boot'
+			[ -e 'boot' ] && rm 'boot'
+			ln -s "$BOOT_DIRNAME/boot"
+		fi
 	)
 	umount $TARGET_ROOT
 }
@@ -1030,7 +1174,7 @@ copy_system_root() {
 mount_target() {
 	echo $DISK_PASSWD | cryptsetup luksOpen "/dev/$ROOT_DEVNAME" $ROOTFS_NAME
 	mount "/dev/mapper/$ROOTFS_NAME" $TARGET_ROOT
-	mount "/dev/$BOOT_DEVNAME" "$TARGET_ROOT/boot"
+	mount "/dev/$BOOT_DEVNAME" "$TARGET_ROOT/$BOOT_DIRNAME"
 
 	local src dest args
 	while read src dest args; do
@@ -1231,6 +1375,7 @@ edit_initramfs_conf() {
 		wq
 	EOF
 	[ "$ADD_ALL_MODS" ] && echo 'MODULES=list' >> $file
+	[ $image_type == 'radxa' ] && sed --in-place 's/FSTYPE=auto/FSTYPE=ext4/' $file
 	[ "$IP_ADDRESS" == 'none' ] || echo "DEVICE=$dev" >> $file
 	[ "$IP_ADDRESS" == 'dhcp' -o "$IP_ADDRESS" == 'none' ] || {
 		echo "IP=$IP_ADDRESS:::$NETMASK::$dev:off" >> $file
@@ -1282,7 +1427,7 @@ copy_authorized_keys() {
 create_fstab() {
 	local file="$TARGET_ROOT/etc/fstab"
 	local text="UUID=$root_uuid / ext4 defaults,noatime,nodiratime,commit=600,errors=remount-ro 0 1
-UUID=$boot_uuid /boot ext4 defaults,noatime,nodiratime,commit=600,errors=remount-ro 0 2
+UUID=$boot_uuid /$BOOT_DIRNAME ext4 defaults,noatime,nodiratime,commit=600,errors=remount-ro 0 2
 tmpfs /tmp tmpfs defaults,nosuid 0 0"
 	rm -rf $file # existing file could have incorrect permissions
 	echo "$text" > $file
@@ -1423,6 +1568,103 @@ apt_install_target_pkgs() {
 	fi
 }
 
+do_locale_gen() {
+	sed -ie 's/#\s*en_US.UTF-8/en_US.UTF-8/' '/etc/locale.gen'
+	locale-gen
+	export LANG='en_US.UTF-8'
+}
+
+run_uboot_update() {
+	u-boot-update U_BOOT_ROOT="root=UUID=$root_uuid"
+	_display_file "/boot/extlinux/extlinux.conf"
+}
+
+set_passwd() {
+	local user=$1 passwd=$2
+	echo -e "$passwd\n$passwd\n" | passwd $user 2>/dev/null
+	echo "Password for user ‘$user’ updated"
+}
+
+create_user() {
+	local user=$1 comment=$2
+	[ -d "/home/$user" ] || {
+		useradd \
+			--user-group --create-home \
+			--home-dir "/home/$user" \
+			--skel '/etc/skel' \
+			--shell '/bin/bash' \
+			--comment "$comment" \
+			$user
+		imsg "User ‘$user’ added"
+	}
+	_display_output "/home/$user" "$(ls -la "/home/$user")"
+}
+
+add_sudo_nopasswd() {
+	if ! egrep -q "^$1\s.*NOPASSWD: ALL$" '/etc/sudoers'; then
+		echo "$1	ALL=(ALL:ALL) NOPASSWD: ALL" >> '/etc/sudoers'
+	fi
+	echo "User ‘$1’ can sudo without a password"
+}
+
+_do_add_hook() {
+	local num=$1 name=$2 context=$3 script_body="$4"
+	local hook_fn="/etc/apt/apt.conf.d/$num$name"
+	local script_dest='/usr/local/bin'
+	local script_fn="$script_dest/$name-hook.sh"
+
+	local hook="# $hook_fn\n\n$context {\n\t\"if [ -x $script_fn ]; then $script_fn; fi\";\n};"
+	local script_hdr="#!/bin/bash\n# $script_fn\n\nset -e\n"
+	local script_colors='YELLOW="\e[33;1m" RESET="\e[0m"'
+
+	echo -e "$hook" > $hook_fn
+
+	mkdir -p $script_dest
+	echo -e "$script_hdr" > $script_fn
+	echo "$script_colors" >> $script_fn
+	echo "$script_body" >> $script_fn
+	chmod 755 $script_fn
+
+	_display_file $hook_fn
+	_display_file $script_fn
+}
+
+add_radxa_kernel_upgrade_hook() {
+	[ "$1" ]
+	_do_add_hook 98 'kernel-upgrade' 'DPkg::Pre-Install-Pkgs' '
+do_extract() {
+	local filename=$1 pkgname=$2
+	echo -e "${YELLOW}kernel-upgrade-hook:$RESET extracting /usr/lib from package $pkgname to /bootpart"
+	dpkg-deb --fsys-tarfile $filename | tar -C /bootpart -xf - ./usr/lib/
+	echo $pkgname > '$1'
+}
+
+while read -r fn; do
+        [[ "$fn" =~ /(linux-image[^_]+)_.*arm64.deb$ ]] && do_extract $fn ${BASH_REMATCH[1]} || true
+done'
+}
+
+add_radxa_kernel_post_upgrade_hook() {
+	[ "$1" ]
+	_do_add_hook 99 'kernel-post-upgrade' 'DPkg::Post-Invoke' '
+if [ -e '$1' ]; then
+	pkgname=$(cat '$1')
+	dtb_path="/usr/lib/$pkgname/rockchip"
+	echo -e "${YELLOW}kernel-post-upgrade-hook:$RESET copying dtb overlays to /bootpart$dtb_path"
+	dpkg-reconfigure radxa-overlays-dkms
+	cp --archive --dereference "$dtb_path/overlays" "/bootpart$dtb_path"
+	echo -e "${YELLOW}kernel-post-upgrade-hook:$RESET rebuilding r8125 module"
+	dpkg-reconfigure r8125-dkms
+	rm '$1'
+fi'
+}
+
+hold_packages() {
+	for pkg in $@; do
+		apt-mark hold $pkg || true
+	done
+}
+
 ifupdown_config_eth0() {
 	local dir file text
 	dir="/etc/network/interfaces.d"
@@ -1510,7 +1752,7 @@ configure_target() {
 	if [ -e $SRC_ROOT/$armbian_env ]; then
 		edit_armbianEnv $armbian_env
 	elif [ -e $SRC_ROOT/$extlinux_conf ]; then
-		edit_extlinux_conf $extlinux_conf
+		[ $image_type == 'armbian' ] && edit_extlinux_conf $extlinux_conf
 	else
 		die "could not find $SRC_ROOT/$armbian_env or $SRC_ROOT/$extlinux_conf"
 	fi
@@ -1523,6 +1765,7 @@ configure_target() {
 
 	export \
 		'ROOTFS_NAME' \
+		'BOOT_DIRNAME' \
 		'IP_ADDRESS' \
 		'target_distro' \
 		'ROOTENC_TESTING' \
@@ -1531,6 +1774,7 @@ configure_target() {
 		'APT_UPGRADE' \
 		'eth_dev' \
 		'netplan_pkgs' \
+		'image_type' \
 		'rootdev_uuid' \
 		'root_uuid' \
 		'boot_uuid' \
@@ -1623,8 +1867,25 @@ _set_env_vars $@
 if [ "$ARG1" == 'in_target' ]; then
 	SCRIPT_DESC='Target script'
 	_hide_output
+	if [ $image_type == 'radxa' ]; then
+		do_locale_gen
+		run_uboot_update
+		set_passwd 'root' $system_passwd
+		create_user 'radxa' 'Radxa Default User'
+		set_passwd 'radxa' 'radxa'
+		add_sudo_nopasswd 'radxa'
+		if dpkg -l 'r8125-dkms' 2>/dev/null; then
+			trigger_fn='/tmp/kernel-upgrade-hook-pkgname'
+			add_radxa_kernel_upgrade_hook $trigger_fn
+			add_radxa_kernel_post_upgrade_hook $trigger_fn
+			hold_packages 'r8125-dkms' 'radxa-system-config-r8125-dkms'
+		fi
+	fi
 	if [ "$IP_ADDRESS" != 'none' ]; then
 		copy_authorized_keys "$dropbear_dir/$authorized_keys_file" '/root/.ssh' 'root' 700 600
+		if [ $image_type == 'radxa' ]; then
+			copy_authorized_keys "$dropbear_dir/$authorized_keys_file" '/home/radxa/.ssh' 'radxa' 700 600
+		fi
 	fi
 	initramfs_needs_update=
 	apt_remove_target_pkgs
@@ -1645,7 +1906,9 @@ else
 	[ "$NO_CLEANUP" ] || trap '_close_loop' EXIT
 	setup_loop
 
-	_set_host_vars
+	get_image_type # set $image_type; mounts loop
+
+	_set_host_vars # requires $image_type
 
 	apt_install_host_pkgs # install cryptsetup, et al.
 	_preclean             # unmount tree, close dev mapper & loop; requires host vars, cryptsetup
@@ -1685,6 +1948,10 @@ else
 	[ "$card_partitioned" == 'n' ] && _do_partition
 	_debug_pause
 
+	if [ $image_type == 'radxa' ]; then
+		[ "$p1_created" == 'n' ] && create_p1
+		[ "$p2_created" == 'n' ] && create_p2
+	fi
 	[ "$bootpart_copied" == 'n' ]        && copy_system_boot
 	[ "$bootpart_label_created" == 'n' ] && create_bootpart_label
 	[ "$rootpart_copied" == 'n' ]        && copy_system_root
