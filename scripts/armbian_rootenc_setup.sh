@@ -1201,10 +1201,18 @@ edit_initramfs_modules() {
 }
 
 copy_authorized_keys() {
-	local dest="$TARGET_ROOT$dropbear_dir"
+	local src=$1 dest="$2" user=$3 dir_perms=$4 file_perms=$5
 	mkdir -p $dest
-	/bin/cat $authorized_keys_dir/* > "$dest/$authorized_keys_file"
-	chmod 644 "$dest/$authorized_keys_file"
+	[ "$user" ] && chmod $dir_perms $dest
+	if [ -d $src ]; then
+		/bin/cat $src/* > "$dest/$authorized_keys_file"
+	elif [ -f $src ]; then
+		/bin/cat $src > "$dest/$authorized_keys_file"
+	else
+		die "Authorized keys source ‘$src’ does not exist!"
+	fi
+	[ "$user" ] && chmod $file_perms "$dest/$authorized_keys_file"
+	[ "$user" -a "$user" != 'root' ] && chown -R $user:$user $dest
 	_display_file "$dest/$authorized_keys_file"
 }
 
@@ -1419,7 +1427,9 @@ configure_target() {
 	copy_etc_files_distro_specific
 	edit_initramfs_conf
 	edit_initramfs_modules
-	[ "$IP_ADDRESS" == 'none' ] || copy_authorized_keys
+	if [ "$IP_ADDRESS" != 'none' ]; then
+		copy_authorized_keys "$authorized_keys_dir" "$TARGET_ROOT$dropbear_dir"
+	fi
 	create_etc_crypttab
 	create_fstab
 	edit_dropbear_cfg
@@ -1451,7 +1461,8 @@ configure_target() {
 		'ROOTENC_IGNORE_APT_ERRORS' \
 		'APT_UPGRADE' \
 		'eth_dev' \
-		'netplan_pkgs'
+		'netplan_pkgs' \
+		'dropbear_dir'
 
 	chroot $TARGET_ROOT "./$PROGNAME" $ORIG_OPTS 'in_target'
 
@@ -1540,6 +1551,9 @@ _set_env_vars $@
 if [ "$ARG1" == 'in_target' ]; then
 	SCRIPT_DESC='Target script'
 	_hide_output
+	if [ "$IP_ADDRESS" != 'none' ]; then
+		copy_authorized_keys "$dropbear_dir/$authorized_keys_file" '/root/.ssh' 'root' 700 600
+	fi
 	apt_remove_target_pkgs
 	apt_install_target_pkgs
 	ifupdown_config_eth0
