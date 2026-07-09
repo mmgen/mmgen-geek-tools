@@ -226,6 +226,13 @@ _warn_user_opts() {
 	fi
 }
 
+_warn_static_ip_without_ifupdown() {
+	if [ "$IP_ADDRESS" != 'none' -a "$NETCFG_IFUPDOWN" != 'y' ]; then
+		warn "\n  You’ve requested a static IP but haven’t selected the ifupdown option (-I)."
+		warn "  You may experience network configuration issues."
+	fi
+}
+
 _set_host_vars() {
 	BUILD_DIR='armbian_rootenc_build'
 	SRC_ROOT="$BUILD_DIR/src"
@@ -1568,6 +1575,8 @@ else
 	[ "$MOUNT_TARGET_ONLY" ] && _mount_target_and_exit
 
 	_warn_user_opts
+	_warn_static_ip_without_ifupdown
+
 	_confirm_user_vars
 
 	[ "$IP_ADDRESS" == 'none' ] || get_authorized_keys
