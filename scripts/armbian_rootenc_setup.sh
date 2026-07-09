@@ -245,6 +245,7 @@ _set_host_vars() {
 	target_mounts=($BOOT_ROOT $TARGET_ROOT)
 	build_subdirs=($SRC_ROOT $BOOT_ROOT $TARGET_ROOT)
 	src_subdirs=($SRC_ROOT)
+	boot_partition_sectors=819200 ;; # 400MB
 }
 
 check_sdcard_name_and_params() {
@@ -633,22 +634,26 @@ get_armbian_image() {
 }
 
 get_partition_info() {
-	local cmdout
-	cmdout=$(fdisk --list --output='Start' $ARMBIAN_IMAGE)
-	partition_table_type=$(echo "$cmdout" | grep '^Disklabel' | cut --delimiter=' ' --fields=3)
+	# global: partition_type_uuid start_sector
+	local uuid end_sector sectors name
+	partition_table_type=$(fdisk --list $ARMBIAN_IMAGE | grep '^Disklabel' | sed -r 's/.*\s+//')
 	case $partition_table_type in
 		'gpt')
-			cmdout=$(fdisk --list-details --output='Start,Type-UUID' $ARMBIAN_IMAGE)
-			read start_sector partition_type_uuid <<<$(echo "$cmdout" | tail --lines=1)
+			disk_id=$(fdisk --list $ARMBIAN_IMAGE | grep '^Disk identifier' | sed -r 's/.*\s+//')
+			part_info=$(
+				fdisk --list-details --output='Type-UUID,UUID,Start,End,Sectors,Name' \
+				$ARMBIAN_IMAGE | egrep '^\S{8}-\S{4}-\S{4}-\S{4}-\S{12}\s')
+			read partition_type_uuid uuid start_sector end_sector sectors name <<<$(
+				echo "$part_info" | head --lines=1)
 			;;
 		'dos')
-			read start_sector <<<$(echo "$cmdout" | tail --lines=1)
+			part_info="$(fdisk --list-details --output='Start' $ARMBIAN_IMAGE | egrep '^\s*[0-9]+$')"
+			read start_sector <<<$(echo "$part_info" | head --lines=1)
 			;;
 		*) die "$partition_table_type: unrecognized partition table type!" ;;
 	esac
 
 	[ $((start_sector % 8)) -eq 0 ] || die "start sector: $start_sector: first partition misaligned!"
-	boot_partition_sectors=819200 # 400MB
 
 	gmsg "Partition table: $PURPLE${partition_table_type^^}$RESET"
 }
