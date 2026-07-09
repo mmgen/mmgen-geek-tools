@@ -585,6 +585,19 @@ _preclean() {
 	remove_build_tree
 }
 
+_clean() {
+	pu_msg "Cleaning up, please wait..."
+	_show_output
+	close_loopmounts
+	_get_device_maps 'mounted_on_target'
+	umount_target
+	update_config_vars_file
+	_close_device_maps 'mounted_on_target'
+	remove_build_tree
+	[ "$build_success" ] && _print_success_msg
+	true
+}
+
 _print_success_msg() {
 	gmsg "All done!"
 	imsg ""
@@ -605,19 +618,6 @@ _print_success_msg() {
 
 	[ "$IP_ADDRESS" != 'none' ] && imsg_nonl ", or via SSH without a password"
 	imsg ""
-}
-
-_clean() {
-	pu_msg "Cleaning up, please wait..."
-	_show_output
-	close_loopmounts
-	_get_device_maps 'mounted_on_target'
-	umount_target
-	update_config_vars_file
-	_close_device_maps 'mounted_on_target'
-	remove_build_tree
-	[ "$build_success" ] && _print_success_msg
-	true
 }
 
 get_armbian_image() {
