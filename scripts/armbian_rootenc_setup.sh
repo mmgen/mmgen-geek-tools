@@ -1140,7 +1140,10 @@ _do_copy_system() {
 		--exclude='var/cache/apt/archives' \
 		$SRC_ROOT/* $TARGET_ROOT
 	_hide_output
+
+	pu_msg "Syncing disk:"
 	sync
+
 	(
 		cd $TARGET_ROOT
 		mkdir -p $BOOT_DIRNAME
