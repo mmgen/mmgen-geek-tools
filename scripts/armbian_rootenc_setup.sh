@@ -128,6 +128,14 @@ print_help() {
   on eMMC’ to enable booting from the eMMC." | less
 }
 
+_umount() {
+	for i in 0 1 2 3 4 5 6 7 8 9; do
+		umount $@ && return
+		sleep 0.5
+	done
+	die "umount $@: command failed!"
+}
+
 pause() {
 	echo -ne $GREEN'(Press any key to continue)'$RESET >&$stderr_dup
 	read
@@ -563,7 +571,7 @@ create_build_tree() {
 umount_target() {
 	for i in ${target_mounts[@]}; do
 		while mountpoint -q $i; do
-			umount -Rl $i
+			_umount -Rl $i
 		done
 	done
 }
@@ -751,13 +759,13 @@ setup_loopmounts() {
 }
 
 _umount_with_check() {
-	mountpoint -q $1 && umount $1
+	mountpoint -q $1 && _umount $1
 }
 
 update_config_vars_file() {
 	mount /dev/$BOOT_DEVNAME $BOOT_ROOT
 	_print_config_vars $CONFIG_VARS_FILE
-	umount $BOOT_ROOT
+	_umount $BOOT_ROOT
 }
 
 _print_states() {
@@ -832,7 +840,7 @@ _add_state_file() {
 			mount "/dev/$BOOT_DEVNAME" $BOOT_ROOT
 			mkdir -p "$BOOT_ROOT/.rootenc_install_state"
 			touch "$BOOT_ROOT/.rootenc_install_state/$state"
-			umount $BOOT_ROOT ;;
+			_umount $BOOT_ROOT ;;
 		*)
 			mkdir -p "$BOOT_ROOT/.rootenc_install_state"
 			touch "$BOOT_ROOT/.rootenc_install_state/$state" ;;
@@ -892,7 +900,7 @@ check_install_state() {
 }
 
 _close_loop() {
-	mountpoint -q $tmpdir && umount $tmpdir
+	mountpoint -q $tmpdir && _umount $tmpdir
 	for i in $(losetup --noheadings --raw --list -j $ARMBIAN_IMAGE | awk '{print $1}'); do
 		losetup -d $i
 	done
@@ -901,7 +909,7 @@ _close_loop() {
 close_loopmounts() {
 	for dir in ${src_subdirs[@]}; do
 		while mountpoint -q $dir; do
-			umount $dir
+			_umount $dir
 		done
 	done
 	_close_loop
@@ -1120,7 +1128,7 @@ copy_system_boot() {
 	esac
 	_hide_output
 	_add_state_file 'bootpart_copied'
-	umount $BOOT_ROOT
+	_umount $BOOT_ROOT
 }
 
 create_bootpart_label() {
@@ -1153,7 +1161,7 @@ _do_copy_system() {
 			ln -s "$BOOT_DIRNAME/boot"
 		fi
 	)
-	umount $TARGET_ROOT
+	_umount $TARGET_ROOT
 }
 
 copy_system_root() {
